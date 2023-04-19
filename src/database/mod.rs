@@ -1,9 +1,8 @@
-use sqlx::{migrate::MigrateDatabase, AnyConnection, Connection};
 use log::info;
+use sqlx::{migrate::MigrateDatabase, AnyConnection, Connection};
 
 pub async fn check_for_migrations() -> Result<(), sqlx::Error> {
-    let uri = dotenvy::var("DATABASE_URL")
-        .unwrap_or("sqlite:vault.db".to_string());
+    let uri = dotenvy::var("DATABASE_URL").unwrap_or("sqlite:vault.db".to_string());
 
     if !sqlx::Any::database_exists(&uri).await? {
         info!("Creating database...");
@@ -21,3 +20,5 @@ pub async fn check_for_migrations() -> Result<(), sqlx::Error> {
 
     Ok(())
 }
+
+pub mod models;

@@ -19,6 +19,7 @@ tokio = { version = "1.27.0", features = ["macros", "rt-multi-thread"] }
 dotenvy = "0.15.7"
 log = "0.4.17"
 env_logger = "0.10.0"
+chrono = { version = "0.4.24", features = ["serde"] }
 
 [dependencies.sqlx]
 version = "0.6.3"
@@ -28,7 +29,6 @@ features = [
     "any",
     "runtime-tokio-rustls",
     "macros",
-    "uuid",
     "chrono",
     "migrate",
     "offline"
