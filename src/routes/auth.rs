@@ -6,7 +6,10 @@ use argon2::{
 use sqlx::{PgPool, Row};
 
 use crate::{
-    auth::token::{generate_jwt_token, verify_jwt_token},
+    auth::{
+        middleware::JwtMiddleware,
+        token::{generate_jwt_token, verify_jwt_token},
+    },
     database::models::{FilteredUser, LoginUserSchema, RegisterUserSchema, User},
 };
 
@@ -131,6 +134,22 @@ async fn login_user(body: web::Json<LoginUserSchema>, pool: web::Data<PgPool>) -
 
     match sqlx::query!(
         "INSERT INTO sessions (token_uuid,user_id,expires_at) VALUES ($1, $2, $3) RETURNING *",
+        access_token_details.token_uuid,
+        user.id,
+        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60)
+    )
+    .fetch_one(pool.as_ref())
+    .await
+    {
+        Ok(_) => {}
+        Err(e) => {
+            return HttpResponse::UnprocessableEntity()
+                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+        }
+    }
+
+    match sqlx::query!(
+        "INSERT INTO sessions (token_uuid,user_id,expires_at) VALUES ($1, $2, $3) RETURNING *",
         refresh_token_details.token_uuid,
         user.id,
         chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60)
@@ -144,6 +163,7 @@ async fn login_user(body: web::Json<LoginUserSchema>, pool: web::Data<PgPool>) -
                 .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
         }
     }
+
     HttpResponse::Ok()
         .json(serde_json::json!({"status": "success", "access_token": access_token_details.token.unwrap(), "refresh_token": refresh_token_details.token.unwrap()}))
 }
@@ -217,8 +237,6 @@ async fn refresh_access_token(req: HttpRequest, pool: web::Data<PgPool>) -> impl
         }
     };
 
-    let old_refresh = refresh_token_details.token_uuid.clone();
-
     let refresh_token_details = match generate_jwt_token(user.id, 60) {
         Ok(token_details) => token_details,
         Err(e) => {
@@ -230,9 +248,9 @@ async fn refresh_access_token(req: HttpRequest, pool: web::Data<PgPool>) -> impl
     sqlx::query!(
         r#"
         DELETE FROM sessions
-        WHERE token_uuid = $1;
+        WHERE user_id = $1;
     "#,
-        old_refresh
+        user.id
     )
     .execute(pool.as_ref())
     .await
@@ -254,8 +272,36 @@ async fn refresh_access_token(req: HttpRequest, pool: web::Data<PgPool>) -> impl
         }
     }
 
+    match sqlx::query!(
+        "INSERT INTO sessions (token_uuid,user_id,expires_at) VALUES ($1, $2, $3) RETURNING *",
+        access_token_details.token_uuid,
+        user.id,
+        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60)
+    )
+    .fetch_one(pool.as_ref())
+    .await
+    {
+        Ok(_) => {}
+        Err(e) => {
+            return HttpResponse::UnprocessableEntity()
+                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+        }
+    }
+
     HttpResponse::Ok()
         .json(serde_json::json!({"status": "success", "access_token": access_token_details.token.unwrap(), "refresh_token": refresh_token_details.token.unwrap()}))
+}
+
+#[get("/users/me")]
+async fn get_me_handler(jwt_guard: JwtMiddleware) -> impl Responder {
+    let json_response = serde_json::json!({
+        "status":  "success",
+        "data": serde_json::json!({
+            "user": filter_user_record(&jwt_guard.user)
+        })
+    });
+
+    HttpResponse::Ok().json(json_response)
 }
 
 pub fn auth_config(cfg: &mut web::ServiceConfig) {
@@ -263,6 +309,7 @@ pub fn auth_config(cfg: &mut web::ServiceConfig) {
         web::scope("auth")
             .service(register_user)
             .service(login_user)
-            .service(refresh_access_token),
+            .service(refresh_access_token)
+            .service(get_me_handler),
     );
 }

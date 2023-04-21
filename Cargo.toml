@@ -25,7 +25,6 @@ uuid = { version = "1.3.1", features = ["serde", "v4"] }
 serde_json = "1.0.96"
 futures = "0.3.28"
 argon2 = "0.5.0"
-pg-embed = "0.7.1"
 rand_core = { version = "0.6.4", features = ["std"] }
 
 [dependencies.sqlx]

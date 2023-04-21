@@ -3,12 +3,12 @@ use std::future::{ready, Ready};
 
 use actix_web::error::{ErrorInternalServerError, ErrorUnauthorized};
 use actix_web::{dev::Payload, Error as ActixWebError};
-use actix_web::{http, web, FromRequest, HttpRequest};
+use actix_web::{web, FromRequest, HttpRequest};
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
-use crate::database::models::UserMiddleware;
+use crate::database::models::User;
 
 use super::token;
 
@@ -26,7 +26,7 @@ impl fmt::Display for ErrorResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JwtMiddleware {
-    pub user: UserMiddleware,
+    pub user: User,
     pub access_token_uuid: uuid::Uuid,
 }
 
@@ -36,24 +36,36 @@ impl FromRequest for JwtMiddleware {
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
         let pool: web::Data<PgPool> = req.app_data::<web::Data<PgPool>>().unwrap().clone();
 
-        let access_token = req
-            .cookie("access_token")
-            .map(|c| c.value().to_string())
-            .or_else(|| {
-                req.headers()
-                    .get(http::header::AUTHORIZATION)
-                    .map(|h| h.to_str().unwrap().split_at(7).1.to_string())
-            });
+        let access_token = match req.headers().get("Authorization") {
+            Some(header_value) => {
+                if let Ok(auth_str) = header_value.to_str() {
+                    if auth_str.starts_with("Bearer ") {
+                        auth_str[7..].to_string()
+                    } else {
+                        let json_error = ErrorResponse {
+                            status: "fail".to_string(),
+                            message: "Invalid token format".to_string(),
+                        };
+                        return ready(Err(ErrorUnauthorized(json_error)));
+                    }
+                } else {
+                    let json_error = ErrorResponse {
+                        status: "fail".to_string(),
+                        message: "Invalid token format".to_string(),
+                    };
+                    return ready(Err(ErrorUnauthorized(json_error)));
+                }
+            }
+            None => {
+                let json_error = ErrorResponse {
+                    status: "fail".to_string(),
+                    message: "You are not logged in, please provide token".to_string(),
+                };
+                return ready(Err(ErrorUnauthorized(json_error)));
+            }
+        };
 
-        if access_token.is_none() {
-            let json_error = ErrorResponse {
-                status: "fail".to_string(),
-                message: "You are not logged in, please provide token".to_string(),
-            };
-            return ready(Err(ErrorUnauthorized(json_error)));
-        }
-
-        let access_token_details = match token::verify_jwt_token(&access_token.unwrap()) {
+        let access_token_details = match token::verify_jwt_token(&access_token) {
             Ok(token_details) => token_details,
             Err(e) => {
                 let json_error = ErrorResponse {
@@ -87,10 +99,9 @@ impl FromRequest for JwtMiddleware {
         let user_exists_result = async move {
             let user_id = user_id_result.await.ok();
 
-            let query_result =
-                sqlx::query_as!(UserMiddleware, "SELECT * FROM users WHERE id = $1", user_id)
-                    .fetch_optional(pool.as_ref())
-                    .await;
+            let query_result = sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", user_id)
+                .fetch_optional(pool.as_ref())
+                .await;
 
             match query_result {
                 Ok(Some(user)) => Ok(user),
