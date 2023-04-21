@@ -1,28 +1,45 @@
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
+use sqlx::Type;
+use uuid::Uuid;
 
 #[allow(non_snake_case)]
 #[derive(Debug, Deserialize, sqlx::FromRow, Serialize, Clone)]
 pub struct User {
-    pub id: i32,
+    pub id: Uuid,
     pub username: String,
     pub email: String,
     pub password_hash: String,
-    pub api_key: String,
-    pub role: UserRole,
+    pub api_key: Option<String>,
+    pub role: String,
     #[serde(rename = "createdAt")]
-    pub created_at: NaiveDateTime,
+    pub created_at: Option<NaiveDateTime>,
     #[serde(rename = "updatedAt")]
-    pub updated_at: NaiveDateTime,
+    pub updated_at: Option<NaiveDateTime>,
+}
+
+#[allow(non_snake_case)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct UserMiddleware {
+    pub id: Uuid,
+    pub username: String,
+    pub email: String,
+    pub password_hash: String,
+    pub api_key: Option<String>,
+    pub role: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: Option<NaiveDateTime>,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: Option<NaiveDateTime>,
 }
 
 #[allow(non_snake_case)]
 #[derive(Debug, Serialize)]
 pub struct FilteredUser {
-    pub id: i32,
+    pub id: String,
     pub username: String,
     pub email: String,
-    pub role: UserRole,
+    pub role: String,
     pub createdAt: NaiveDateTime,
     pub updatedAt: NaiveDateTime,
 }
@@ -40,7 +57,7 @@ pub struct LoginUserSchema {
     pub password: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Type)]
 pub enum UserRole {
     Admin,
     User,

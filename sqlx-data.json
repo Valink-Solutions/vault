@@ -1,0 +1,248 @@
+{
+  "db": "PostgreSQL",
+  "7180817d385a0a1271a5cfa51dfac4f653d1a8fd0511a36aa9fa9ed5fb71efa6": {
+    "describe": {
+      "columns": [
+        {
+          "name": "token_uuid",
+          "ordinal": 0,
+          "type_info": "Uuid"
+        },
+        {
+          "name": "user_id",
+          "ordinal": 1,
+          "type_info": "Uuid"
+        },
+        {
+          "name": "expires_at",
+          "ordinal": 2,
+          "type_info": "Timestamp"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false
+      ],
+      "parameters": {
+        "Left": [
+          "Uuid",
+          "Uuid",
+          "Timestamp"
+        ]
+      }
+    },
+    "query": "INSERT INTO sessions (token_uuid,user_id,expires_at) VALUES ($1, $2, $3) RETURNING *"
+  },
+  "843923b9a0257cf80f1dff554e7dc8fdfc05f489328e8376513124dfb42996e3": {
+    "describe": {
+      "columns": [
+        {
+          "name": "id",
+          "ordinal": 0,
+          "type_info": "Uuid"
+        },
+        {
+          "name": "username",
+          "ordinal": 1,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "email",
+          "ordinal": 2,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "password_hash",
+          "ordinal": 3,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "api_key",
+          "ordinal": 4,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "role",
+          "ordinal": 5,
+          "type_info": "Text"
+        },
+        {
+          "name": "created_at",
+          "ordinal": 6,
+          "type_info": "Timestamp"
+        },
+        {
+          "name": "updated_at",
+          "ordinal": 7,
+          "type_info": "Timestamp"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        false,
+        true,
+        false,
+        true,
+        true
+      ],
+      "parameters": {
+        "Left": [
+          "Uuid"
+        ]
+      }
+    },
+    "query": "SELECT * FROM users WHERE id = $1"
+  },
+  "d4bd949543b2a5fc3c2fd57aab0e0dd864010a8bc8efdd2106fcdf612d889b40": {
+    "describe": {
+      "columns": [
+        {
+          "name": "id",
+          "ordinal": 0,
+          "type_info": "Uuid"
+        },
+        {
+          "name": "username",
+          "ordinal": 1,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "email",
+          "ordinal": 2,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "password_hash",
+          "ordinal": 3,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "api_key",
+          "ordinal": 4,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "role",
+          "ordinal": 5,
+          "type_info": "Text"
+        },
+        {
+          "name": "created_at",
+          "ordinal": 6,
+          "type_info": "Timestamp"
+        },
+        {
+          "name": "updated_at",
+          "ordinal": 7,
+          "type_info": "Timestamp"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        false,
+        true,
+        false,
+        true,
+        true
+      ],
+      "parameters": {
+        "Left": [
+          "Uuid",
+          "Varchar",
+          "Varchar",
+          "Varchar",
+          "Text",
+          "Timestamp"
+        ]
+      }
+    },
+    "query": "INSERT INTO users (id,username,email,password_hash,role,created_at,updated_at) VALUES ($1, $2, $3, $4, $5, $6, $6) RETURNING *"
+  },
+  "f3f58600e971f1be6cbe206bba24f77769f54c6230e28f5b3dc719b869d9cb3f": {
+    "describe": {
+      "columns": [
+        {
+          "name": "id",
+          "ordinal": 0,
+          "type_info": "Uuid"
+        },
+        {
+          "name": "username",
+          "ordinal": 1,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "email",
+          "ordinal": 2,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "password_hash",
+          "ordinal": 3,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "api_key",
+          "ordinal": 4,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "role",
+          "ordinal": 5,
+          "type_info": "Text"
+        },
+        {
+          "name": "created_at",
+          "ordinal": 6,
+          "type_info": "Timestamp"
+        },
+        {
+          "name": "updated_at",
+          "ordinal": 7,
+          "type_info": "Timestamp"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        false,
+        true,
+        false,
+        true,
+        true
+      ],
+      "parameters": {
+        "Left": [
+          "Text"
+        ]
+      }
+    },
+    "query": "SELECT * FROM users WHERE email = $1"
+  },
+  "fdbf91c2fbcbfcfa9d215efe611ac18495899a524af5de7e437117daeadb5c8f": {
+    "describe": {
+      "columns": [
+        {
+          "name": "user_id",
+          "ordinal": 0,
+          "type_info": "Uuid"
+        }
+      ],
+      "nullable": [
+        false
+      ],
+      "parameters": {
+        "Left": [
+          "Uuid"
+        ]
+      }
+    },
+    "query": "SELECT user_id FROM sessions WHERE token_uuid = $1"
+  }
+}

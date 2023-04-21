@@ -12,7 +12,8 @@ async fn main() -> std::io::Result<()> {
 
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
-    let database_url = env::var("DATABASE_URL").unwrap_or("sqlite:vault.db".to_string());
+    // let database_url = env::var("DATABASE_URL").unwrap_or("sqlite:vault.db".to_string());
+    let database_url = env::var("DATABASE_URL").expect("No Database URL");
 
     check_for_migrations()
         .await
