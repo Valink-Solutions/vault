@@ -1,7 +1,7 @@
 use actix_web::{middleware::Logger, web, App, HttpServer};
 use env_logger::Env;
 use log::info;
-use sqlx::any::AnyPoolOptions;
+use sqlx::postgres::PgPoolOptions;
 use std::env;
 use std::time::Duration;
 use vault::database::check_for_migrations;
@@ -19,7 +19,7 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("An error occurred while running migrations.");
 
-    let pool = AnyPoolOptions::new()
+    let pool = PgPoolOptions::new()
         .min_connections(0)
         .max_connections(16)
         .max_lifetime(Some(Duration::from_secs(60 * 60)))
