@@ -1,18 +1,20 @@
 -- Create users table
 CREATE TABLE users (
-    id SERIAL PRIMARY KEY,
+    id uuid PRIMARY KEY,
     username VARCHAR(255) NOT NULL UNIQUE,
     email VARCHAR(255) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
-    api_key VARCHAR(255) NOT NULL UNIQUE,
+    api_key VARCHAR(255) UNIQUE,
     role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX users_email_idx ON users (email);
+
 -- Create worlds table
 CREATE TABLE worlds (
-    id SERIAL PRIMARY KEY,
+    id uuid PRIMARY KEY,
     user_id uuid NOT NULL,
     name VARCHAR(255) NOT NULL,
     seed BIGINT NOT NULL,
@@ -24,7 +26,7 @@ CREATE TABLE worlds (
 
 -- Create world_versions table
 CREATE TABLE world_versions (
-    id SERIAL PRIMARY KEY,
+    id uuid PRIMARY KEY,
     world_id uuid NOT NULL,
     version_number INT NOT NULL,
     backup_path VARCHAR(255) NOT NULL,
