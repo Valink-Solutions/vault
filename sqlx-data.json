@@ -1,5 +1,17 @@
 {
   "db": "PostgreSQL",
+  "4c191691122ccea5bf72c4637397a2674aaada74247785eddc503befc532a16e": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Uuid"
+        ]
+      }
+    },
+    "query": "\n        DELETE FROM sessions\n        WHERE user_id = $1;\n    "
+  },
   "7180817d385a0a1271a5cfa51dfac4f653d1a8fd0511a36aa9fa9ed5fb71efa6": {
     "describe": {
       "columns": [

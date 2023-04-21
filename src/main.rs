@@ -3,8 +3,10 @@ use env_logger::Env;
 use log::info;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
+use std::sync::Arc;
 use std::time::Duration;
 use vault::database::check_for_migrations;
+use vault::object::create_object_store;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -12,7 +14,6 @@ async fn main() -> std::io::Result<()> {
 
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
-    // let database_url = env::var("DATABASE_URL").unwrap_or("sqlite:vault.db".to_string());
     let database_url = env::var("DATABASE_URL").expect("No Database URL");
 
     check_for_migrations()
@@ -27,13 +28,18 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("Error Creating database connection");
 
+    let object_store = Arc::new(create_object_store().expect("Failed to create object store"));
+
     info!("Starting the vault HTTP Server");
 
     HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
             .configure(vault::routes::auth_config)
+            .configure(vault::routes::worlds_config)
+            .configure(vault::routes::versions_config)
             .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(object_store.clone()))
     })
     .bind(("127.0.0.1", 8080))?
     .run()
