@@ -70,6 +70,8 @@ sh
 DATABASE_URL="postgres://postgres:password@localhost:5432/vault"
 PRIVATE_KEY_PATH="./private_key.pem"
 PUBLIC_KEY_PATH="./public_key.pem"
+STORAGE_TYPE="local"
+LOCAL_STORAGE_PATH="./testing_data"
 ```
 
 Replace `password` with your PostgreSQL password. This file will be used to store sensitive configuration values that should not be committed to the repository.
