@@ -15,7 +15,7 @@ use crate::{
 };
 
 #[post("/")]
-pub async fn create_new_world(
+async fn create_new_world(
     body: web::Json<CreateWorldSchema>,
     pool: web::Data<PgPool>,
     jwt_guard: JwtMiddleware,
@@ -49,7 +49,7 @@ pub async fn create_new_world(
 }
 
 #[get("/{world_id}")]
-pub async fn get_world_by_uuid(
+async fn get_world_by_uuid(
     world_id: web::Path<String>,
     pool: web::Data<PgPool>,
     jwt_guard: JwtMiddleware,
@@ -90,7 +90,7 @@ pub async fn get_world_by_uuid(
 }
 
 #[post("/{world_id}/versions/")]
-pub async fn create_new_world_version(
+async fn create_new_world_version(
     world_id: web::Path<String>,
     body: web::Json<CreateWorldVersionSchema>,
     pool: web::Data<PgPool>,
@@ -215,7 +215,7 @@ pub async fn create_new_world_version(
 }
 
 #[get("/{world_id}/versions/")]
-pub async fn get_world_versions_by_uuid(
+async fn get_world_versions_by_uuid(
     world_id: web::Path<String>,
     query: web::Query<PageQuery>,
     pool: web::Data<PgPool>,
@@ -286,7 +286,7 @@ pub async fn get_world_versions_by_uuid(
 }
 
 #[put("/{world_id}/versions/{version_id}")]
-pub async fn upload_world_version(
+async fn upload_world_version(
     path_info: web::Path<VersionUploadPath>,
     mut payload: Multipart,
     pool: web::Data<PgPool>,
@@ -369,6 +369,75 @@ pub async fn upload_world_version(
         .json(serde_json::json!({"status": "success", "message": format!("Version: {} successfully uploaded.", version.version_number)})))
 }
 
+#[get("/{world_id}/versions/{version_id}/download")]
+async fn download_world_by_version_uuid(
+    path_info: web::Path<VersionUploadPath>,
+    pool: web::Data<PgPool>,
+    object_store: web::Data<Arc<Box<dyn ObjectStore>>>,
+    jwt_guard: JwtMiddleware,
+) -> Result<HttpResponse, actix_web::Error> {
+    let world_id = path_info.world_id.to_string();
+    let version_id = path_info.version_id.to_string();
+
+    let world_uuid = match Uuid::parse_str(&world_id) {
+        Ok(uuid) => uuid,
+        Err(e) => {
+            return Ok(HttpResponse::BadRequest()
+                .json(serde_json::json!({"status": "fail", "message": format_args!("{}", e)})));
+        }
+    };
+
+    let version_uuid = match Uuid::parse_str(&version_id) {
+        Ok(uuid) => uuid,
+        Err(e) => {
+            return Ok(HttpResponse::BadRequest()
+                .json(serde_json::json!({"status": "fail", "message": format_args!("{}", e)})));
+        }
+    };
+
+    let query_result = sqlx::query_as!(World, "SELECT * FROM worlds WHERE id = $1", world_uuid)
+        .fetch_optional(pool.as_ref())
+        .await
+        .unwrap();
+
+    let world = match query_result {
+        Some(world) => world,
+        None => {
+            return Ok(HttpResponse::BadRequest()
+                .json(serde_json::json!({"status": "fail", "message": "Invalid world id."})));
+        }
+    };
+
+    let query_result = sqlx::query_as!(
+        WorldVersion,
+        "SELECT * FROM world_versions WHERE id = $1",
+        version_uuid
+    )
+    .fetch_optional(pool.as_ref())
+    .await
+    .unwrap();
+
+    let version = match query_result {
+        Some(version) => version,
+        None => {
+            return Ok(HttpResponse::BadRequest()
+                .json(serde_json::json!({"status": "fail", "message": "Invalid version id."})));
+        }
+    };
+
+    if world.user_id != jwt_guard.user.id {
+        if jwt_guard.user.role != "admin" {
+            return Ok(HttpResponse::Unauthorized()
+                .json(serde_json::json!({"status": "fail", "message": "You are not authorized to access this world."})));
+        }
+    }
+
+    let file_path: Path = version.backup_path.try_into().unwrap();
+    let stream = object_store.get(&file_path).await.unwrap().into_stream();
+
+    Ok(HttpResponse::Ok().streaming(stream))
+}
+
 pub fn worlds_config(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("worlds")
@@ -376,6 +445,7 @@ pub fn worlds_config(cfg: &mut web::ServiceConfig) {
             .service(get_world_by_uuid)
             .service(create_new_world_version)
             .service(get_world_versions_by_uuid)
-            .service(upload_world_version),
+            .service(upload_world_version)
+            .service(download_world_by_version_uuid),
     );
 }
