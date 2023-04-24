@@ -25,12 +25,12 @@ impl fmt::Display for ErrorResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct JwtMiddleware {
+pub struct AuthMiddleware {
     pub user: User,
     pub access_token_uuid: uuid::Uuid,
 }
 
-impl FromRequest for JwtMiddleware {
+impl FromRequest for AuthMiddleware {
     type Error = ActixWebError;
     type Future = Ready<Result<Self, Self::Error>>;
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
@@ -123,7 +123,7 @@ impl FromRequest for JwtMiddleware {
         };
 
         match block_on(user_exists_result) {
-            Ok(user) => ready(Ok(JwtMiddleware {
+            Ok(user) => ready(Ok(AuthMiddleware {
                 access_token_uuid,
                 user,
             })),
