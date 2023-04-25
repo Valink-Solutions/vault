@@ -56,6 +56,64 @@
     },
     "query": "SELECT * FROM worlds WHERE id = $1"
   },
+  "1bb548e2f12d3cdc648202fd532c80cf48825a50a4e2bbdd6c775fe965245968": {
+    "describe": {
+      "columns": [
+        {
+          "name": "id",
+          "ordinal": 0,
+          "type_info": "Uuid"
+        },
+        {
+          "name": "user_id",
+          "ordinal": 1,
+          "type_info": "Uuid"
+        },
+        {
+          "name": "name",
+          "ordinal": 2,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "seed",
+          "ordinal": 3,
+          "type_info": "Int8"
+        },
+        {
+          "name": "created_at",
+          "ordinal": 4,
+          "type_info": "Timestamp"
+        },
+        {
+          "name": "updated_at",
+          "ordinal": 5,
+          "type_info": "Timestamp"
+        },
+        {
+          "name": "version",
+          "ordinal": 6,
+          "type_info": "Int4"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        false,
+        true,
+        true,
+        false
+      ],
+      "parameters": {
+        "Left": [
+          "Uuid",
+          "Int8",
+          "Int8"
+        ]
+      }
+    },
+    "query": "\n        SELECT *\n        FROM worlds\n        WHERE user_id = $1\n        LIMIT $2\n        OFFSET $3\n    "
+  },
   "2eeb5595dbd2fb7bd038ca5e8cf0dcb893311d76689fbd26f8acb3478fcac0a9": {
     "describe": {
       "columns": [
@@ -234,6 +292,18 @@
     },
     "query": "\n        SELECT *\n        FROM world_versions\n        WHERE world_id = $1\n        ORDER BY version_number\n        LIMIT $2\n        OFFSET $3\n    "
   },
+  "3e1ef743531138e812efff5dacb1b8779d122b9e46dc2f28ffeb73d0ee3b1347": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Uuid"
+        ]
+      }
+    },
+    "query": "DELETE FROM worlds WHERE id = $1"
+  },
   "4c191691122ccea5bf72c4637397a2674aaada74247785eddc503befc532a16e": {
     "describe": {
       "columns": [],
@@ -279,6 +349,19 @@
       }
     },
     "query": "INSERT INTO sessions (token_uuid,user_id,expires_at) VALUES ($1, $2, $3) RETURNING *"
+  },
+  "786e55a21f6c073ea86c02fab99a8ee91f5218093b38a72832bc5f2e4d0fbd76": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Int4",
+          "Uuid"
+        ]
+      }
+    },
+    "query": "UPDATE worlds SET version = $1 WHERE id = $2"
   },
   "83044ece597f2a7d264065f0ee1039ade3330ae5559cb26dbec6e83acfec10c2": {
     "describe": {
@@ -402,6 +485,204 @@
       }
     },
     "query": "SELECT * FROM users WHERE id = $1"
+  },
+  "9131986e5cb56318e15242fff047769fe6c4cfc8b767f371b35f27ca9c1408aa": {
+    "describe": {
+      "columns": [
+        {
+          "name": "id",
+          "ordinal": 0,
+          "type_info": "Uuid"
+        },
+        {
+          "name": "world_id",
+          "ordinal": 1,
+          "type_info": "Uuid"
+        },
+        {
+          "name": "version_number",
+          "ordinal": 2,
+          "type_info": "Int4"
+        },
+        {
+          "name": "backup_path",
+          "ordinal": 3,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "created_at",
+          "ordinal": 4,
+          "type_info": "Timestamp"
+        },
+        {
+          "name": "game_mode",
+          "ordinal": 5,
+          "type_info": "Text"
+        },
+        {
+          "name": "allow_cheats",
+          "ordinal": 6,
+          "type_info": "Bool"
+        },
+        {
+          "name": "difficulty_locked",
+          "ordinal": 7,
+          "type_info": "Bool"
+        },
+        {
+          "name": "spawn_x",
+          "ordinal": 8,
+          "type_info": "Int4"
+        },
+        {
+          "name": "spawn_y",
+          "ordinal": 9,
+          "type_info": "Int4"
+        },
+        {
+          "name": "spawn_z",
+          "ordinal": 10,
+          "type_info": "Int4"
+        },
+        {
+          "name": "time",
+          "ordinal": 11,
+          "type_info": "Int8"
+        },
+        {
+          "name": "weather",
+          "ordinal": 12,
+          "type_info": "Text"
+        },
+        {
+          "name": "hardcore",
+          "ordinal": 13,
+          "type_info": "Bool"
+        },
+        {
+          "name": "command_blocks_enabled",
+          "ordinal": 14,
+          "type_info": "Bool"
+        },
+        {
+          "name": "command_block_output",
+          "ordinal": 15,
+          "type_info": "Bool"
+        },
+        {
+          "name": "do_daylight_cycle",
+          "ordinal": 16,
+          "type_info": "Bool"
+        },
+        {
+          "name": "do_mob_spawning",
+          "ordinal": 17,
+          "type_info": "Bool"
+        },
+        {
+          "name": "do_weather_cycle",
+          "ordinal": 18,
+          "type_info": "Bool"
+        },
+        {
+          "name": "keep_inventory",
+          "ordinal": 19,
+          "type_info": "Bool"
+        },
+        {
+          "name": "max_players",
+          "ordinal": 20,
+          "type_info": "Int4"
+        },
+        {
+          "name": "view_distance",
+          "ordinal": 21,
+          "type_info": "Int4"
+        },
+        {
+          "name": "level_name",
+          "ordinal": 22,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "resource_pack",
+          "ordinal": 23,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "resource_pack_sha1",
+          "ordinal": 24,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "difficulty",
+          "ordinal": 25,
+          "type_info": "Text"
+        },
+        {
+          "name": "size",
+          "ordinal": 26,
+          "type_info": "Int8"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        false,
+        true,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        true,
+        true,
+        false,
+        false
+      ],
+      "parameters": {
+        "Left": [
+          "Text",
+          "Bool",
+          "Bool",
+          "Int4",
+          "Int4",
+          "Int4",
+          "Int8",
+          "Int8",
+          "Text",
+          "Bool",
+          "Bool",
+          "Bool",
+          "Bool",
+          "Bool",
+          "Bool",
+          "Bool",
+          "Int4",
+          "Int4",
+          "Varchar",
+          "Varchar",
+          "Varchar",
+          "Text",
+          "Uuid"
+        ]
+      }
+    },
+    "query": "UPDATE world_versions SET\n            game_mode = $1,\n            allow_cheats = $2,\n            difficulty_locked = $3,\n            spawn_x = $4,\n            spawn_y = $5,\n            spawn_z = $6,\n            time = $7,\n            size = $8,\n            weather = $9,\n            hardcore = $10,\n            command_blocks_enabled = $11,\n            command_block_output = $12,\n            do_daylight_cycle = $13,\n            do_mob_spawning = $14,\n            do_weather_cycle = $15,\n            keep_inventory = $16,\n            max_players = $17,\n            view_distance = $18,\n            level_name = $19,\n            resource_pack = $20,\n            resource_pack_sha1 = $21,\n            difficulty = $22\n        WHERE id = $23 RETURNING *"
   },
   "930f16c11857c06e43cb55598661a15c27efa31d6ec09e9dedde5768a4459c01": {
     "describe": {
@@ -780,6 +1061,77 @@
       }
     },
     "query": "SELECT * FROM world_versions WHERE id = $1"
+  },
+  "b3f08c42e0f171fa49a7aa2d99e7ba4554c72de46c4d61645fad24cedac7a77e": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Uuid"
+        ]
+      }
+    },
+    "query": "DELETE FROM world_versions WHERE id = $1"
+  },
+  "c6d797342ad0de0ad950c22508490997c403b0d38fe8c9eca4fa8d00061e4642": {
+    "describe": {
+      "columns": [
+        {
+          "name": "id",
+          "ordinal": 0,
+          "type_info": "Uuid"
+        },
+        {
+          "name": "user_id",
+          "ordinal": 1,
+          "type_info": "Uuid"
+        },
+        {
+          "name": "name",
+          "ordinal": 2,
+          "type_info": "Varchar"
+        },
+        {
+          "name": "seed",
+          "ordinal": 3,
+          "type_info": "Int8"
+        },
+        {
+          "name": "created_at",
+          "ordinal": 4,
+          "type_info": "Timestamp"
+        },
+        {
+          "name": "updated_at",
+          "ordinal": 5,
+          "type_info": "Timestamp"
+        },
+        {
+          "name": "version",
+          "ordinal": 6,
+          "type_info": "Int4"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        false,
+        true,
+        true,
+        false
+      ],
+      "parameters": {
+        "Left": [
+          "Varchar",
+          "Int8",
+          "Timestamp",
+          "Uuid"
+        ]
+      }
+    },
+    "query": "UPDATE worlds SET name = $1, seed = $2, updated_at = $3 WHERE id = $4 RETURNING *"
   },
   "d4bd949543b2a5fc3c2fd57aab0e0dd864010a8bc8efdd2106fcdf612d889b40": {
     "describe": {

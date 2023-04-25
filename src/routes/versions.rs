@@ -57,6 +57,14 @@ pub async fn create_new_world_version(
         chrono::Utc::now().naive_utc()
     );
 
+    let mut transaction = match pool.begin().await {
+        Ok(transaction) => transaction,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(serde_json::json!({"status": "error","message": format_args!("{:?}", e)}));
+        }
+    };
+
     let query_result = sqlx::query_as!(
         WorldVersion,
         r#"INSERT INTO world_versions (
@@ -120,17 +128,41 @@ pub async fn create_new_world_version(
         body.difficulty,
         chrono::Utc::now().naive_utc()
     )
-    .fetch_one(pool.as_ref())
+    .fetch_one(&mut transaction)
     .await;
 
     match query_result {
         Ok(world_version) => {
-            let world_response = serde_json::json!({"status": "success","data": serde_json::json!({
-                "world": world,
-                "version": world_version
-            })});
+            match sqlx::query!(
+                "UPDATE worlds SET version = $1 WHERE id = $2",
+                world.version + 1,
+                world.id
+            )
+            .execute(&mut transaction)
+            .await
+            {
+                Ok(_) => {
+                    match transaction.commit().await {
+                        Ok(_) => {
+                            let world_response = serde_json::json!({"status": "success","data": serde_json::json!({
+                                "world": world,
+                                "version": world_version
+                            })});
 
-            return HttpResponse::Ok().json(world_response);
+                            return HttpResponse::Ok().json(world_response);
+                        }
+                        Err(e) => {
+                            return HttpResponse::InternalServerError()
+                                .json(serde_json::json!({"status": "error","message": format_args!("{:?}", e)}));
+                        }
+                    };
+                }
+                Err(e) => {
+                    return HttpResponse::InternalServerError().json(
+                        serde_json::json!({"status": "error","message": format_args!("{:?}", e)}),
+                    );
+                }
+            };
         }
         Err(e) => {
             return HttpResponse::InternalServerError()
@@ -436,6 +468,7 @@ pub async fn get_version_by_uuid(
 #[delete("/{world_id}/versions/{version_id}")]
 pub async fn delete_world_version_by_uuid(
     path_info: web::Path<WorldVersionPath>,
+    object_store: web::Data<Arc<Box<dyn ObjectStore>>>,
     pool: web::Data<PgPool>,
     auth_guard: AuthMiddleware,
 ) -> impl Responder {
@@ -495,20 +528,27 @@ pub async fn delete_world_version_by_uuid(
         }
     };
 
-    match sqlx::query!(
-        "DELETE FROM world_versions WHERE id = $1",
-        version.id
-    )
-    .execute(pool.as_ref())
-    .await {
+    match sqlx::query!("DELETE FROM world_versions WHERE id = $1", version.id)
+        .execute(pool.as_ref())
+        .await
+    {
         Ok(_) => {
+            let file_path: Path = version.backup_path.try_into().unwrap();
+
+            match object_store.delete(&file_path).await {
+                Ok(_) => {}
+                Err(e) => {
+                    return HttpResponse::InternalServerError().json(
+                        serde_json::json!({"status": "error", "message": format_args!("{}", e)}),
+                    )
+                }
+            };
+
             HttpResponse::Accepted()
-                .json(serde_json::json!({"status": "success","message": format!("World: {} deleted successfully.", world_uuid.to_string())}))
-        },
-        Err(e) => {
-            HttpResponse::InternalServerError()
-                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}))
+                .json(serde_json::json!({"status": "success","message": format!("World Version: {} deleted successfully.", version_uuid.to_string())}))
         }
+        Err(e) => HttpResponse::InternalServerError()
+            .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)})),
     }
 }
 
