@@ -7,7 +7,7 @@ use sqlx::{PgPool, Row};
 
 use crate::{
     auth::{
-        middleware::JwtMiddleware,
+        middleware::AuthMiddleware,
         token::{generate_jwt_token, verify_jwt_token},
     },
     database::models::{FilteredUser, LoginUserSchema, RegisterUserSchema, User},
@@ -293,11 +293,11 @@ async fn refresh_access_token(req: HttpRequest, pool: web::Data<PgPool>) -> impl
 }
 
 #[get("/users/me")]
-async fn get_me_handler(jwt_guard: JwtMiddleware) -> impl Responder {
+async fn get_me_handler(auth_guard: AuthMiddleware) -> impl Responder {
     let json_response = serde_json::json!({
         "status":  "success",
         "data": serde_json::json!({
-            "user": filter_user_record(&jwt_guard.user)
+            "user": filter_user_record(&auth_guard.user)
         })
     });
 

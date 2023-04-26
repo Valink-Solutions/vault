@@ -3,4 +3,7 @@ pub mod user;
 pub mod worlds;
 
 pub use user::{FilteredUser, LoginUserSchema, RegisterUserSchema, User};
-pub use worlds::{CreateWorldSchema, CreateWorldVersionSchema, World, WorldVersion};
+pub use worlds::{
+    CreateWorldSchema, CreateWorldVersionSchema, UpdateWorldSchema, UpdateWorldVersionSchema,
+    World, WorldVersion,
+};
