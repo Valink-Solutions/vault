@@ -4,6 +4,7 @@ use actix_multipart::Multipart;
 use actix_web::{delete, get, post, put, web, HttpResponse, Responder};
 use futures_util::StreamExt as _;
 use object_store::{path::Path, ObjectStore};
+use serde_json::Value;
 use sqlx::PgPool;
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
@@ -11,7 +12,7 @@ use uuid::Uuid;
 use crate::{
     auth::middleware::AuthMiddleware,
     database::models::{CreateWorldVersionSchema, UpdateWorldVersionSchema, World, WorldVersion},
-    utilities::{PageQuery, WorldVersionPath},
+    utilities::WorldVersionPath,
 };
 
 #[post("/{world_id}/versions")]
@@ -53,7 +54,7 @@ pub async fn create_new_world_version(
         "{}-{}-{}-{}.zip",
         world.user_id,
         world.id,
-        world.version + 1,
+        world.current_version + 1,
         chrono::Utc::now().naive_utc()
     );
 
@@ -70,7 +71,7 @@ pub async fn create_new_world_version(
         r#"INSERT INTO world_versions (
             id,
             world_id,
-            version_number,
+            version,
             backup_path,
             game_mode,
             allow_cheats,
@@ -82,27 +83,22 @@ pub async fn create_new_world_version(
             size,
             weather,
             hardcore,
-            command_blocks_enabled,
-            command_block_output,
             do_daylight_cycle,
             do_mob_spawning,
             do_weather_cycle,
             keep_inventory,
-            max_players,
-            view_distance,
             level_name,
-            resource_pack,
-            resource_pack_sha1,
+            additional_data,
             difficulty,
             created_at
         )
         VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
         )
         RETURNING *"#,
         uuid::Uuid::new_v4(),
         world.id,
-        world.version + 1,
+        world.current_version + 1,
         file_path,
         body.game_mode.to_string(),
         body.allow_cheats,
@@ -114,17 +110,12 @@ pub async fn create_new_world_version(
         body.size,
         body.weather,
         body.hardcore,
-        body.command_blocks_enabled,
-        body.command_block_output,
         body.do_daylight_cycle,
         body.do_mob_spawning,
         body.do_weather_cycle,
         body.keep_inventory,
-        body.max_players,
-        body.view_distance,
         body.level_name.to_string(),
-        body.resource_pack,
-        body.resource_pack_sha1,
+        body.additional_data,
         body.difficulty,
         chrono::Utc::now().naive_utc()
     )
@@ -134,8 +125,8 @@ pub async fn create_new_world_version(
     match query_result {
         Ok(world_version) => {
             match sqlx::query!(
-                "UPDATE worlds SET version = $1 WHERE id = $2",
-                world.version + 1,
+                "UPDATE worlds SET current_version = $1 WHERE id = $2",
+                world.current_version + 1,
                 world.id
             )
             .execute(&mut transaction)
@@ -171,18 +162,28 @@ pub async fn create_new_world_version(
     }
 }
 
-#[get("/{world_id}/versions")]
+#[get("/{world_id}/versions/{version_id}")]
 pub async fn get_world_versions_by_uuid(
-    world_id: web::Path<String>,
-    query: web::Query<PageQuery>,
+    path_info: web::Path<WorldVersionPath>,
     pool: web::Data<PgPool>,
     auth_guard: AuthMiddleware,
 ) -> impl Responder {
+    let world_id = path_info.world_id.to_string();
+    let version_id = path_info.version_id.to_string();
+
     let world_uuid = match Uuid::parse_str(&world_id) {
         Ok(uuid) => uuid,
         Err(e) => {
             return HttpResponse::BadRequest()
                 .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+        }
+    };
+
+    let version_uuid = match Uuid::parse_str(&version_id) {
+        Ok(uuid) => uuid,
+        Err(e) => {
+            return HttpResponse::BadRequest()
+                .json(serde_json::json!({"status": "fail", "message": format_args!("{}", e)}));
         }
     };
 
@@ -206,31 +207,23 @@ pub async fn get_world_versions_by_uuid(
         }
     }
 
-    let limit = query.limit.unwrap_or(100);
-    let offset = query.offset.unwrap_or(0);
-
-    let versions_result: Result<Vec<WorldVersion>, sqlx::Error> = sqlx::query_as!(
+    let version_result = sqlx::query_as!(
         WorldVersion,
         r#"
         SELECT *
         FROM world_versions
-        WHERE world_id = $1
-        ORDER BY version_number
-        LIMIT $2
-        OFFSET $3
+        WHERE id = $1
     "#,
-        world.id,
-        limit,
-        offset
+        version_uuid
     )
-    .fetch_all(pool.as_ref())
+    .fetch_one(pool.as_ref())
     .await;
 
-    match versions_result {
-        Ok(versions) => {
+    match version_result {
+        Ok(version) => {
             let world_response = serde_json::json!({"status": "success","data": serde_json::json!({
                 "world": world,
-                "versions": versions
+                "version": version
             })});
 
             return HttpResponse::Ok().json(world_response);
@@ -323,7 +316,7 @@ pub async fn upload_world_version(
     writer.shutdown().await.unwrap();
 
     Ok(HttpResponse::Accepted()
-        .json(serde_json::json!({"status": "success", "message": format!("Version: {} successfully uploaded.", version.version_number)})))
+        .json(serde_json::json!({"status": "success", "message": format!("Version: {} successfully uploaded.", version.version)})))
 }
 
 #[get("/{world_id}/versions/{version_id}/download")]
@@ -628,19 +621,14 @@ async fn update_world_version_by_uuid(
             size = $8,
             weather = $9,
             hardcore = $10,
-            command_blocks_enabled = $11,
-            command_block_output = $12,
-            do_daylight_cycle = $13,
-            do_mob_spawning = $14,
-            do_weather_cycle = $15,
-            keep_inventory = $16,
-            max_players = $17,
-            view_distance = $18,
-            level_name = $19,
-            resource_pack = $20,
-            resource_pack_sha1 = $21,
-            difficulty = $22
-        WHERE id = $23 RETURNING *",
+            do_daylight_cycle = $11,
+            do_mob_spawning = $12,
+            do_weather_cycle = $13,
+            keep_inventory = $14,
+            level_name = $15,
+            difficulty = $16,
+            additional_data = $17
+        WHERE id = $18 RETURNING *",
         body.game_mode.clone().unwrap_or(version.game_mode),
         body.allow_cheats.unwrap_or(version.allow_cheats),
         body.difficulty_locked.unwrap_or(version.difficulty_locked),
@@ -651,24 +639,15 @@ async fn update_world_version_by_uuid(
         body.size.unwrap_or(version.size),
         body.weather.clone().unwrap_or(version.weather),
         body.hardcore.unwrap_or(version.hardcore),
-        body.command_blocks_enabled
-            .unwrap_or(version.command_blocks_enabled),
-        body.command_block_output
-            .unwrap_or(version.command_block_output),
         body.do_daylight_cycle.unwrap_or(version.do_daylight_cycle),
         body.do_mob_spawning.unwrap_or(version.do_mob_spawning),
         body.do_weather_cycle.unwrap_or(version.do_weather_cycle),
         body.keep_inventory.unwrap_or(version.keep_inventory),
-        body.max_players.unwrap_or(version.max_players),
-        body.view_distance.unwrap_or(version.view_distance),
         body.level_name.clone().unwrap_or(version.level_name),
-        body.resource_pack
-            .clone()
-            .unwrap_or(version.resource_pack.unwrap_or_default()),
-        body.resource_pack_sha1
-            .clone()
-            .unwrap_or(version.resource_pack_sha1.unwrap_or_default()),
         body.difficulty.clone().unwrap_or(version.difficulty),
+        body.additional_data
+            .clone()
+            .unwrap_or(version.additional_data.unwrap_or(Value::default())),
         version_uuid
     )
     .fetch_one(pool.as_ref())

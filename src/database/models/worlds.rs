@@ -9,7 +9,8 @@ pub struct World {
     pub user_id: Uuid,
     pub name: String,
     pub seed: i64,
-    pub version: i32,
+    pub current_version: i32,
+    pub edition: String,
     #[serde(rename = "createdAt")]
     pub created_at: Option<NaiveDateTime>,
     #[serde(rename = "updatedAt")]
@@ -21,35 +22,29 @@ pub struct World {
 pub struct WorldVersion {
     pub id: Uuid,
     pub world_id: Uuid,
-    pub version_number: i32,
+    pub version: i32,
     pub backup_path: String,
+    pub created_at: Option<NaiveDateTime>,
     pub game_mode: String,
+    pub difficulty: String,
     pub allow_cheats: bool,
     pub difficulty_locked: bool,
     pub spawn_x: i32,
     pub spawn_y: i32,
     pub spawn_z: i32,
     pub time: i64,
-    pub size: i64,
     pub weather: String,
     pub hardcore: bool,
-    pub command_blocks_enabled: bool,
-    pub command_block_output: bool,
     pub do_daylight_cycle: bool,
     pub do_mob_spawning: bool,
     pub do_weather_cycle: bool,
     pub keep_inventory: bool,
-    pub max_players: i32,
-    pub difficulty: String,
-    pub view_distance: i32,
+    pub size: i64,
     pub level_name: String,
-    pub resource_pack: Option<String>,
-    pub resource_pack_sha1: Option<String>,
-    #[serde(rename = "createdAt")]
-    pub created_at: Option<NaiveDateTime>,
+    pub additional_data: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Deserialize, sqlx::FromRow, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct UpdateWorldVersionSchema {
     pub game_mode: Option<String>,
     pub allow_cheats: Option<bool>,
@@ -61,24 +56,20 @@ pub struct UpdateWorldVersionSchema {
     pub size: Option<i64>,
     pub weather: Option<String>,
     pub hardcore: Option<bool>,
-    pub command_blocks_enabled: Option<bool>,
-    pub command_block_output: Option<bool>,
     pub do_daylight_cycle: Option<bool>,
     pub do_mob_spawning: Option<bool>,
     pub do_weather_cycle: Option<bool>,
     pub keep_inventory: Option<bool>,
-    pub max_players: Option<i32>,
     pub difficulty: Option<String>,
-    pub view_distance: Option<i32>,
     pub level_name: Option<String>,
-    pub resource_pack: Option<String>,
-    pub resource_pack_sha1: Option<String>,
+    pub additional_data: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct CreateWorldSchema {
     pub name: String,
     pub seed: i64,
+    pub edition: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -99,16 +90,11 @@ pub struct CreateWorldVersionSchema {
     pub size: i64,
     pub weather: String,
     pub hardcore: bool,
-    pub command_blocks_enabled: bool,
-    pub command_block_output: bool,
     pub do_daylight_cycle: bool,
     pub do_mob_spawning: bool,
     pub do_weather_cycle: bool,
     pub keep_inventory: bool,
-    pub max_players: i32,
     pub difficulty: String,
-    pub view_distance: i32,
     pub level_name: String,
-    pub resource_pack: Option<String>,
-    pub resource_pack_sha1: Option<String>,
+    pub additional_data: Option<serde_json::Value>,
 }

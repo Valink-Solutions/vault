@@ -9,8 +9,8 @@ use crate::{
 };
 
 use super::versions::{
-    create_new_world_version, download_world_by_version_uuid, get_world_versions_by_uuid,
-    update_world_version_by_uuid, upload_world_version,
+    create_new_world_version, delete_world_version_by_uuid, download_world_by_version_uuid,
+    get_world_versions_by_uuid, update_world_version_by_uuid, upload_world_version,
 };
 
 #[get("")]
@@ -66,11 +66,12 @@ async fn create_new_world(
 ) -> impl Responder {
     let query_result = sqlx::query_as!(
         World,
-        "INSERT INTO worlds (id,user_id,name,seed,version,created_at,updated_at) VALUES ($1, $2, $3, $4, $5, $6, $6) RETURNING *",
+        "INSERT INTO worlds (id,user_id,name,seed,edition,current_version,created_at,updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $7) RETURNING *",
         uuid::Uuid::new_v4(),
         auth_guard.user.id,
         body.name.to_string(),
         body.seed,
+        body.edition.to_lowercase(),
         0,
         chrono::Utc::now().naive_utc()
     )
@@ -252,6 +253,7 @@ pub fn worlds_config(cfg: &mut web::ServiceConfig) {
             .service(get_worlds_for_current_user)
             .service(update_world_by_uuid)
             .service(delete_world_by_uuid)
-            .service(update_world_version_by_uuid),
+            .service(update_world_version_by_uuid)
+            .service(delete_world_version_by_uuid),
     );
 }

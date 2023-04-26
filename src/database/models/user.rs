@@ -9,7 +9,6 @@ pub struct User {
     pub username: String,
     pub email: String,
     pub password_hash: String,
-    pub api_key: Option<String>,
     pub role: String,
     #[serde(rename = "createdAt")]
     pub created_at: Option<NaiveDateTime>,
