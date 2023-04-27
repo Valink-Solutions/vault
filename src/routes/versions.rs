@@ -50,14 +50,6 @@ pub async fn create_new_world_version(
         }
     }
 
-    let file_path = format!(
-        "{}-{}-{}-{}.zip",
-        world.user_id,
-        world.id,
-        world.current_version + 1,
-        chrono::Utc::now().naive_utc()
-    );
-
     let mut transaction = match pool.begin().await {
         Ok(transaction) => transaction,
         Err(e) => {
@@ -99,7 +91,7 @@ pub async fn create_new_world_version(
         uuid::Uuid::new_v4(),
         world.id,
         world.current_version + 1,
-        file_path,
+        "",
         body.game_mode.to_string(),
         body.allow_cheats,
         body.difficulty_locked,
@@ -299,7 +291,15 @@ pub async fn upload_world_version(
         }
     }
 
-    let file_path: Path = version.backup_path.try_into().unwrap();
+    // let file_path: Path = version.backup_path.try_into().unwrap();
+
+    let file_path: Path = format!(
+        "{}/{}/{}-{}.zip",
+        world.user_id,
+        world.id,
+        version.id,
+        chrono::Utc::now().naive_utc()
+    ).try_into().unwrap();
 
     let (_id, mut writer) = object_store.put_multipart(&file_path).await.unwrap();
 
@@ -314,6 +314,20 @@ pub async fn upload_world_version(
 
     writer.flush().await.unwrap();
     writer.shutdown().await.unwrap();
+
+    match sqlx::query!(
+        "UPDATE world_versions SET backup_path = $1 WHERE id = $2",
+        file_path.to_string(),
+        version.id
+    )
+    .execute(pool.as_ref())
+    .await {
+        Ok(_) => {},
+        Err(e) => {
+            return Ok(HttpResponse::BadRequest()
+                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)})));
+            }
+    };
 
     Ok(HttpResponse::Accepted()
         .json(serde_json::json!({"status": "success", "message": format!("Version: {} successfully uploaded.", version.version)})))
