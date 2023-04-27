@@ -29,6 +29,8 @@ rand_core = { version = "0.6.4", features = ["std"] }
 object_store = { version = "0.5.6", features = ["aws"] }
 actix-multipart = "0.6.0"
 futures-util = "0.3.28"
+tokio-stream = "0.1.13"
+actix = "0.13.0"
 
 [dependencies.sqlx]
 version = "0.6.3"
