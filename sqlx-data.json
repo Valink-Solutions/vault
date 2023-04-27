@@ -62,6 +62,19 @@
     },
     "query": "SELECT * FROM worlds WHERE id = $1"
   },
+  "180db1deb6e822110e775efc8d3f77aacb85c91fd1cd6f40044e3e019bb12be6": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Uuid",
+          "Uuid"
+        ]
+      }
+    },
+    "query": "INSERT INTO deleted_worlds (world_id,user_id) VALUES ($1, $2)"
+  },
   "1bb548e2f12d3cdc648202fd532c80cf48825a50a4e2bbdd6c775fe965245968": {
     "describe": {
       "columns": [
@@ -125,6 +138,18 @@
       }
     },
     "query": "\n        SELECT *\n        FROM worlds\n        WHERE user_id = $1\n        LIMIT $2\n        OFFSET $3\n    "
+  },
+  "348e7c0195cd931c876aa39c19e128c88c805a5181cfc4f64d1290e4df3c4ee3": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Int4"
+        ]
+      }
+    },
+    "query": "\n                            DELETE FROM deleted_worlds\n                            WHERE id = $1\n                            "
   },
   "3e1ef743531138e812efff5dacb1b8779d122b9e46dc2f28ffeb73d0ee3b1347": {
     "describe": {
@@ -313,6 +338,19 @@
     },
     "query": "UPDATE world_versions SET\n            game_mode = $1,\n            allow_cheats = $2,\n            difficulty_locked = $3,\n            spawn_x = $4,\n            spawn_y = $5,\n            spawn_z = $6,\n            time = $7,\n            size = $8,\n            weather = $9,\n            hardcore = $10,\n            do_daylight_cycle = $11,\n            do_mob_spawning = $12,\n            do_weather_cycle = $13,\n            keep_inventory = $14,\n            level_name = $15,\n            difficulty = $16,\n            additional_data = $17\n        WHERE id = $18 RETURNING *"
   },
+  "63d43619ae78e5aa696b395520c6ba972e42a151095ae6694c64085ec507930d": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Varchar",
+          "Uuid"
+        ]
+      }
+    },
+    "query": "UPDATE world_versions SET backup_path = $1 WHERE id = $2"
+  },
   "7180817d385a0a1271a5cfa51dfac4f653d1a8fd0511a36aa9fa9ed5fb71efa6": {
     "describe": {
       "columns": [
@@ -346,6 +384,36 @@
       }
     },
     "query": "INSERT INTO sessions (token_uuid,user_id,expires_at) VALUES ($1, $2, $3) RETURNING *"
+  },
+  "730ef9d643f9167e914fc87f8e36519c70af8eb8c31c937d40e6a6107244db19": {
+    "describe": {
+      "columns": [
+        {
+          "name": "id",
+          "ordinal": 0,
+          "type_info": "Int4"
+        },
+        {
+          "name": "world_id",
+          "ordinal": 1,
+          "type_info": "Uuid"
+        },
+        {
+          "name": "user_id",
+          "ordinal": 2,
+          "type_info": "Uuid"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false
+      ],
+      "parameters": {
+        "Left": []
+      }
+    },
+    "query": "\n                SELECT * FROM deleted_worlds\n                "
   },
   "843923b9a0257cf80f1dff554e7dc8fdfc05f489328e8376513124dfb42996e3": {
     "describe": {
@@ -561,6 +629,18 @@
       }
     },
     "query": "SELECT * FROM world_versions WHERE id = $1"
+  },
+  "a91dfb56791cd2810e65f9be1b99270aeb994251407b2bc245c40df2831e1924": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Timestamp"
+        ]
+      }
+    },
+    "query": "\n                DELETE FROM sessions\n                WHERE expires_at < $1\n                "
   },
   "b3f08c42e0f171fa49a7aa2d99e7ba4554c72de46c4d61645fad24cedac7a77e": {
     "describe": {
