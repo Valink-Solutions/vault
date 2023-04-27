@@ -33,7 +33,7 @@ async fn main() -> std::io::Result<()> {
 
     let object_store = Arc::new(create_object_store().expect("Failed to create object store"));
 
-    let mut runner = runner::TaskRunner::new();
+    let runner = runner::TaskRunner::new();
 
     let cloned_pool = pool.clone();
     runner.run_task(std::time::Duration::from_secs(15 * 60), move || {

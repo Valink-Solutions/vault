@@ -1,32 +1,34 @@
-use actix::Arbiter;
-use futures::StreamExt;
-use tokio_stream::wrappers::IntervalStream;
+use tokio::runtime::Handle;
+use tokio::time;
 
 pub struct TaskRunner {
-    arbiter: Arbiter,
+    handle: Handle,
 }
 
 impl TaskRunner {
     pub fn new() -> Self {
         TaskRunner {
-            arbiter: Arbiter::new(),
+            handle: Handle::current(),
         }
     }
 
-    pub fn run_task<F, R>(&mut self, interval: std::time::Duration, mut task: F)
+    pub fn run_task<F, R>(&self, interval: time::Duration, mut task: F)
     where
         F: FnMut() -> R + Send + 'static,
         R: std::future::Future<Output = ()> + Send + 'static,
     {
-        let future = IntervalStream::new(actix::clock::interval(interval))
-            .for_each_concurrent(2, move |_| task());
+        let handle = self.handle.clone();
+        let future = async move {
+            let mut interval = time::interval(interval);
+            loop {
+                interval.tick().await;
+                let task_future = task();
+                handle.spawn(async move {
+                    task_future.await;
+                });
+            }
+        };
 
-        self.arbiter.spawn(future);
-    }
-}
-
-impl Drop for TaskRunner {
-    fn drop(&mut self) {
-        self.arbiter.stop();
+        self.handle.spawn(future);
     }
 }
