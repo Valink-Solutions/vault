@@ -299,7 +299,9 @@ pub async fn upload_world_version(
         world.id,
         version.id,
         chrono::Utc::now().naive_utc()
-    ).try_into().unwrap();
+    )
+    .try_into()
+    .unwrap();
 
     let (_id, mut writer) = object_store.put_multipart(&file_path).await.unwrap();
 
@@ -321,12 +323,13 @@ pub async fn upload_world_version(
         version.id
     )
     .execute(pool.as_ref())
-    .await {
-        Ok(_) => {},
+    .await
+    {
+        Ok(_) => {}
         Err(e) => {
             return Ok(HttpResponse::BadRequest()
                 .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)})));
-            }
+        }
     };
 
     Ok(HttpResponse::Accepted()

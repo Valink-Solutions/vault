@@ -1,15 +1,15 @@
 use actix_web::{middleware::Logger, web, App, HttpServer};
 use env_logger::Env;
+use futures::StreamExt;
 use log::{info, warn};
 use object_store::path::Path;
 use sqlx::postgres::PgPoolOptions;
-use vault::runner;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 use vault::database::check_for_migrations;
 use vault::object::create_object_store;
-use futures::StreamExt;
+use vault::runner;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -33,10 +33,10 @@ async fn main() -> std::io::Result<()> {
 
     let object_store = Arc::new(create_object_store().expect("Failed to create object store"));
 
-    let mut runner = runner::TaskRunner::create();
+    let mut runner = runner::TaskRunner::new();
 
     let cloned_pool = pool.clone();
-    runner.execute(std::time::Duration::from_secs(15 * 60), move || {
+    runner.run_task(std::time::Duration::from_secs(15 * 60), move || {
         let inner_cloned_pool = cloned_pool.clone();
 
         async move {
@@ -54,17 +54,14 @@ async fn main() -> std::io::Result<()> {
 
             match result {
                 Ok(_) => info!("Successfully deleted old session records."),
-                Err(e) => warn!(
-                    "Failed to delete old records from sessions: {:?}",
-                    e
-                ),
+                Err(e) => warn!("Failed to delete old records from sessions: {:?}", e),
             }
         }
     });
 
     let cloned_pool = pool.clone();
     let cloned_obj_store = object_store.clone();
-    runner.execute(std::time::Duration::from_secs(15 * 60), move || {
+    runner.run_task(std::time::Duration::from_secs(15 * 60), move || {
         let inner_cloned_pool = cloned_pool.clone();
         let inner_obj_store = cloned_obj_store.clone();
 
@@ -82,7 +79,9 @@ async fn main() -> std::io::Result<()> {
             match result {
                 Ok(worlds) => {
                     for world in worlds {
-                        let prefix: Path = format!("{}/{}", world.user_id, world.world_id).try_into().unwrap();
+                        let prefix: Path = format!("{}/{}", world.user_id, world.world_id)
+                            .try_into()
+                            .unwrap();
                         match inner_obj_store.list(Some(&prefix)).await {
                             Ok(mut stream) => {
                                 // let mut stream = stream.into_inner();
@@ -92,11 +91,14 @@ async fn main() -> std::io::Result<()> {
                                             // Perform desired operations on each ObjectMeta here
                                             println!("ObjectMeta: {:?}", object_meta);
 
-                                            match inner_obj_store.delete(&object_meta.location).await {
-                                                Ok(_) => {
-                                                    
+                                            match inner_obj_store
+                                                .delete(&object_meta.location)
+                                                .await
+                                            {
+                                                Ok(_) => {}
+                                                Err(e) => {
+                                                    warn!("Failed to delete queued worlds: {:?}", e)
                                                 }
-                                                Err(e) => warn!("Failed to delete queued worlds: {:?}", e)
                                             };
                                         }
                                         Err(e) => {
@@ -104,8 +106,8 @@ async fn main() -> std::io::Result<()> {
                                         }
                                     }
                                 }
-                            },
-                            Err(e) => warn!("Failed to delete queued worlds: {:?}", e)
+                            }
+                            Err(e) => warn!("Failed to delete queued worlds: {:?}", e),
                         }
 
                         match sqlx::query!(
@@ -116,22 +118,18 @@ async fn main() -> std::io::Result<()> {
                             world.id
                         )
                         .execute(&inner_cloned_pool)
-                        .await {
-                            Ok(_) => {},
-                            Err(e) => warn!("Failed to delete queued world: {:?}", e)
+                        .await
+                        {
+                            Ok(_) => {}
+                            Err(e) => warn!("Failed to delete queued world: {:?}", e),
                         };
-
-                    };
-                },
-                Err(e) => warn!(
-                    "Failed to delete queued worlds: {:?}",
-                    e
-                ),
+                    }
+                }
+                Err(e) => warn!("Failed to delete queued worlds: {:?}", e),
             }
 
             info!("Successfully deleted queued worlds.")
-
-        } 
+        }
     });
 
     info!("Starting the vault HTTP Server");

@@ -224,7 +224,6 @@ async fn delete_world_by_uuid(
         }
     }
 
-
     let mut transaction = match pool.begin().await {
         Ok(transaction) => transaction,
         Err(e) => {
@@ -233,21 +232,19 @@ async fn delete_world_by_uuid(
         }
     };
 
-    match sqlx::query!(
-        "DELETE FROM worlds WHERE id = $1",
-        world_uuid
-    )
-    .execute(&mut transaction)
-    .await {
+    match sqlx::query!("DELETE FROM worlds WHERE id = $1", world_uuid)
+        .execute(&mut transaction)
+        .await
+    {
         Ok(_) => {
-
             match sqlx::query!(
                 "INSERT INTO deleted_worlds (world_id,user_id) VALUES ($1, $2)",
                 world.id,
                 world.user_id
             )
             .execute(&mut transaction)
-            .await {
+            .await
+            {
                 Ok(_) => {
                     match transaction.commit().await {
                         Ok(_) => {
@@ -259,17 +256,16 @@ async fn delete_world_by_uuid(
                                 .json(serde_json::json!({"status": "error","message": format_args!("{:?}", e)}));
                         }
                     };
-                },
+                }
                 Err(e) => {
-                    return HttpResponse::InternalServerError()
-                        .json(serde_json::json!({"status": "error","message": format_args!("{:?}", e)}));
+                    return HttpResponse::InternalServerError().json(
+                        serde_json::json!({"status": "error","message": format_args!("{:?}", e)}),
+                    );
                 }
             };
-        },
-        Err(e) => {
-            HttpResponse::InternalServerError()
-                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}))
         }
+        Err(e) => HttpResponse::InternalServerError()
+            .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)})),
     }
 }
 

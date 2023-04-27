@@ -7,13 +7,13 @@ pub struct TaskRunner {
 }
 
 impl TaskRunner {
-    pub fn create() -> Self {
+    pub fn new() -> Self {
         TaskRunner {
             arbiter: Arbiter::new(),
         }
     }
 
-    pub fn execute<F, R>(&mut self, interval: std::time::Duration, mut task: F)
+    pub fn run_task<F, R>(&mut self, interval: std::time::Duration, mut task: F)
     where
         F: FnMut() -> R + Send + 'static,
         R: std::future::Future<Output = ()> + Send + 'static,
