@@ -10,7 +10,7 @@ use sqlx::PgPool;
 
 use crate::database::models::User;
 
-use super::token;
+use super::token::verify_jwt_token;
 
 #[derive(Debug, Serialize)]
 struct ErrorResponse {
@@ -27,7 +27,7 @@ impl fmt::Display for ErrorResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AuthMiddleware {
     pub user: User,
-    pub access_token_uuid: uuid::Uuid,
+    pub scope: Vec<String>,
 }
 
 impl FromRequest for AuthMiddleware {
@@ -65,7 +65,7 @@ impl FromRequest for AuthMiddleware {
             }
         };
 
-        let access_token_details = match token::verify_jwt_token(&access_token) {
+        let access_token_details = match verify_jwt_token(&access_token) {
             Ok(token_details) => token_details,
             Err(e) => {
                 let json_error = ErrorResponse {
@@ -76,15 +76,12 @@ impl FromRequest for AuthMiddleware {
             }
         };
 
-        let access_token_uuid =
-            uuid::Uuid::parse_str(&access_token_details.token_uuid.to_string()).unwrap();
-
         let pool_ref = pool.clone();
 
-        let user_id_result = async move {
+        let user_result = async move {
             let result = sqlx::query!(
-                "SELECT user_id FROM sessions WHERE token_uuid = $1",
-                access_token_uuid
+                "SELECT user_id FROM oauth_access_tokens WHERE access_token = $1",
+                access_token_details.token_uuid
             )
             .fetch_optional(pool_ref.as_ref())
             .await;
@@ -97,7 +94,7 @@ impl FromRequest for AuthMiddleware {
         };
 
         let user_exists_result = async move {
-            let user_id = user_id_result.await.ok();
+            let user_id = user_result.await.ok();
 
             let query_result = sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", user_id)
                 .fetch_optional(pool.as_ref())
@@ -124,8 +121,13 @@ impl FromRequest for AuthMiddleware {
 
         match block_on(user_exists_result) {
             Ok(user) => ready(Ok(AuthMiddleware {
-                access_token_uuid,
                 user,
+                scope: access_token_details
+                    .scope
+                    .to_string()
+                    .split(',')
+                    .map(|s| s.to_string())
+                    .collect(),
             })),
             Err(error) => ready(Err(error)),
         }

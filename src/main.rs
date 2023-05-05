@@ -5,9 +5,12 @@ use sqlx::postgres::PgPoolOptions;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
+use vault::auth::utils::create_vault_client_if_not_exists;
 use vault::database::check_for_migrations;
 use vault::object::create_object_store;
-use vault::tasks::{delete_old_sessions, delete_queued_worlds, TaskRunner};
+use vault::tasks::{
+    delete_old_access_tokens, delete_old_refresh_tokens, delete_queued_worlds, TaskRunner,
+};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -29,6 +32,10 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("Error Creating database connection");
 
+    create_vault_client_if_not_exists(&pool.clone())
+        .await
+        .expect("An error occurred while running migrations.");
+
     let object_store = Arc::new(create_object_store().expect("Failed to create object store"));
 
     let runner = TaskRunner::new();
@@ -38,7 +45,16 @@ async fn main() -> std::io::Result<()> {
         let inner_cloned_pool = cloned_pool.clone();
 
         async move {
-            delete_old_sessions(&inner_cloned_pool).await;
+            delete_old_access_tokens(&inner_cloned_pool).await;
+        }
+    });
+
+    let cloned_pool = pool.clone();
+    runner.run_task(std::time::Duration::from_secs(15 * 60), move || {
+        let inner_cloned_pool = cloned_pool.clone();
+
+        async move {
+            delete_old_refresh_tokens(&inner_cloned_pool).await;
         }
     });
 

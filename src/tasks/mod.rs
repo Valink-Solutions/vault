@@ -7,13 +7,32 @@ use log::{info, warn};
 use object_store::{path::Path, ObjectStore};
 pub use runner::TaskRunner;
 
-pub async fn delete_old_sessions(pool: &sqlx::PgPool) {
+pub async fn delete_old_access_tokens(pool: &sqlx::PgPool) {
     info!("Starting old session deletion.");
 
     let result = sqlx::query!(
         "
-        DELETE FROM sessions
-        WHERE expires_at < $1
+        DELETE FROM oauth_access_tokens
+        WHERE expires < $1
+        ",
+        chrono::Utc::now().naive_utc()
+    )
+    .execute(pool)
+    .await;
+
+    match result {
+        Ok(_) => info!("Successfully deleted old session records."),
+        Err(e) => warn!("Failed to delete old records from sessions: {:?}", e),
+    }
+}
+
+pub async fn delete_old_refresh_tokens(pool: &sqlx::PgPool) {
+    info!("Starting old session deletion.");
+
+    let result = sqlx::query!(
+        "
+        DELETE FROM oauth_refresh_tokens
+        WHERE expires < $1
         ",
         chrono::Utc::now().naive_utc()
     )

@@ -1,16 +1,21 @@
+use std::env;
+
 use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder};
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
 use sqlx::{PgPool, Row};
+use uuid::Uuid;
 
 use crate::{
     auth::{
         middleware::AuthMiddleware,
-        token::{generate_jwt_token, verify_jwt_token},
+        token::{generate_jwt_token, generate_token},
     },
-    database::models::{FilteredUser, LoginUserSchema, RegisterUserSchema, User},
+    database::models::{
+        CreateClientRequest, FilteredUser, LoginUserSchema, OAuthClient, RegisterUserSchema, User,
+    },
 };
 
 fn filter_user_record(user: &User) -> FilteredUser {
@@ -105,40 +110,32 @@ async fn login_user(body: web::Json<LoginUserSchema>, pool: web::Data<PgPool>) -
             .json(serde_json::json!({"status": "fail", "message": "Invalid password."}));
     }
 
-    let access_token_details = match generate_jwt_token(user.id, 30) {
-        Ok(token_details) => token_details,
-        Err(e) => {
-            return HttpResponse::BadGateway()
-                .json(serde_json::json!({"status": "fail", "message": format_args!("{}", e)}));
-        }
-    };
+    // let access_token = generate_token(64);
+    let client_id = env::var("CLIENT_ID").expect("FIRST_PARTY_CLIENT_ID is not set");
 
-    let refresh_token_details = match generate_jwt_token(user.id, 60) {
-        Ok(token_details) => token_details,
-        Err(e) => {
-            return HttpResponse::BadGateway()
-                .json(serde_json::json!({"status": "fail", "message": format_args!("{}", e)}));
-        }
-    };
+    let client_uuid = Uuid::parse_str(&client_id).unwrap();
 
-    sqlx::query!(
-        r#"
-        DELETE FROM sessions
-        WHERE user_id = $1;
-    "#,
-        user.id
-    )
-    .execute(pool.as_ref())
-    .await
-    .ok();
+    let access_token_details =
+        match generate_jwt_token(user.id, client_uuid, "read,write".to_string(), 30) {
+            Ok(token_details) => token_details,
+            Err(e) => {
+                return HttpResponse::BadGateway().json(
+                    serde_json::json!({"status": "fail", "message": format_args!("{:?}", e)}),
+                );
+            }
+        };
+
+    let refresh_token = generate_token(64);
 
     match sqlx::query!(
-        "INSERT INTO sessions (token_uuid,user_id,expires_at) VALUES ($1, $2, $3) RETURNING *",
-        access_token_details.token_uuid,
+        "INSERT INTO oauth_access_tokens (access_token,client_id,user_id,expires,scope) VALUES ($1, $2, $3, $4, $5)",
+        access_token_details.clone().token_uuid,
+        client_uuid,
         user.id,
-        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60)
+        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30),
+        "read,write"
     )
-    .fetch_one(pool.as_ref())
+    .execute(pool.as_ref())
     .await
     {
         Ok(_) => {}
@@ -149,12 +146,14 @@ async fn login_user(body: web::Json<LoginUserSchema>, pool: web::Data<PgPool>) -
     }
 
     match sqlx::query!(
-        "INSERT INTO sessions (token_uuid,user_id,expires_at) VALUES ($1, $2, $3) RETURNING *",
-        refresh_token_details.token_uuid,
+        "INSERT INTO oauth_refresh_tokens (refresh_token,client_id,user_id,expires,scope) VALUES ($1, $2, $3, $4, $5)",
+        refresh_token.clone(),
+        client_uuid,
         user.id,
-        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60)
+        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60),
+        "read,write"
     )
-    .fetch_one(pool.as_ref())
+    .execute(pool.as_ref())
     .await
     {
         Ok(_) => {}
@@ -165,7 +164,7 @@ async fn login_user(body: web::Json<LoginUserSchema>, pool: web::Data<PgPool>) -
     }
 
     HttpResponse::Ok()
-        .json(serde_json::json!({"status": "success", "access_token": access_token_details.token.unwrap(), "refresh_token": refresh_token_details.token.unwrap()}))
+        .json(serde_json::json!({"status": "success", "access_token": access_token_details.token.unwrap(), "refresh_token": refresh_token}))
 }
 
 #[get("/refresh")]
@@ -194,17 +193,9 @@ async fn refresh_access_token(req: HttpRequest, pool: web::Data<PgPool>) -> impl
         }
     };
 
-    let refresh_token_details = match verify_jwt_token(&refresh_token) {
-        Ok(token_details) => token_details,
-        Err(e) => {
-            return HttpResponse::Forbidden()
-                .json(serde_json::json!({"status": "fail", "message": format_args!("{:?}", e)}));
-        }
-    };
-
     let query_result = sqlx::query!(
-        "SELECT user_id FROM sessions WHERE token_uuid = $1",
-        refresh_token_details.token_uuid
+        "SELECT user_id FROM oauth_refresh_tokens WHERE refresh_token = $1",
+        refresh_token
     )
     .fetch_one(pool.as_ref())
     .await;
@@ -229,40 +220,31 @@ async fn refresh_access_token(req: HttpRequest, pool: web::Data<PgPool>) -> impl
 
     let user = query_result.unwrap();
 
-    let access_token_details = match generate_jwt_token(user.id, 60) {
-        Ok(token_details) => token_details,
-        Err(e) => {
-            return HttpResponse::BadGateway()
-                .json(serde_json::json!({"status": "fail", "message": format_args!("{:?}", e)}));
-        }
-    };
+    let client_id = env::var("CLIENT_ID").expect("FIRST_PARTY_CLIENT_ID is not set");
 
-    let refresh_token_details = match generate_jwt_token(user.id, 60) {
-        Ok(token_details) => token_details,
-        Err(e) => {
-            return HttpResponse::BadGateway()
-                .json(serde_json::json!({"status": "fail", "message": format_args!("{}", e)}));
-        }
-    };
+    let client_uuid = Uuid::parse_str(&client_id).unwrap();
 
-    sqlx::query!(
-        r#"
-        DELETE FROM sessions
-        WHERE user_id = $1;
-    "#,
-        user.id
-    )
-    .execute(pool.as_ref())
-    .await
-    .ok();
+    let access_token_details =
+        match generate_jwt_token(user.id, client_uuid, "read,write".to_string(), 30) {
+            Ok(token_details) => token_details,
+            Err(e) => {
+                return HttpResponse::BadGateway().json(
+                    serde_json::json!({"status": "fail", "message": format_args!("{:?}", e)}),
+                );
+            }
+        };
+
+    let new_refresh_token = generate_token(64);
 
     match sqlx::query!(
-        "INSERT INTO sessions (token_uuid,user_id,expires_at) VALUES ($1, $2, $3) RETURNING *",
-        refresh_token_details.token_uuid,
+        "INSERT INTO oauth_access_tokens (access_token,client_id,user_id,expires,scope) VALUES ($1, $2, $3, $4, $5)",
+        access_token_details.token_uuid.clone(),
+        client_uuid,
         user.id,
-        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60)
+        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60),
+        "read,write"
     )
-    .fetch_one(pool.as_ref())
+    .execute(pool.as_ref())
     .await
     {
         Ok(_) => {}
@@ -273,12 +255,14 @@ async fn refresh_access_token(req: HttpRequest, pool: web::Data<PgPool>) -> impl
     }
 
     match sqlx::query!(
-        "INSERT INTO sessions (token_uuid,user_id,expires_at) VALUES ($1, $2, $3) RETURNING *",
-        access_token_details.token_uuid,
+        "INSERT INTO oauth_refresh_tokens (refresh_token,client_id,user_id,expires,scope) VALUES ($1, $2, $3, $4, $5)",
+        new_refresh_token.clone(),
+        client_uuid,
         user.id,
-        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60)
+        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60),
+        "read,write"
     )
-    .fetch_one(pool.as_ref())
+    .execute(pool.as_ref())
     .await
     {
         Ok(_) => {}
@@ -289,7 +273,7 @@ async fn refresh_access_token(req: HttpRequest, pool: web::Data<PgPool>) -> impl
     }
 
     HttpResponse::Ok()
-        .json(serde_json::json!({"status": "success", "access_token": access_token_details.token.unwrap(), "refresh_token": refresh_token_details.token.unwrap()}))
+        .json(serde_json::json!({"status": "success", "access_token": access_token_details.token.unwrap(), "refresh_token": new_refresh_token}))
 }
 
 #[get("/users/me")]
@@ -304,12 +288,43 @@ async fn get_me_handler(auth_guard: AuthMiddleware) -> impl Responder {
     HttpResponse::Ok().json(json_response)
 }
 
+#[post("/create-client")]
+async fn create_new_client(
+    data: web::Json<CreateClientRequest>,
+    pool: web::Data<PgPool>,
+    auth_guard: AuthMiddleware,
+) -> impl Responder {
+    let oauth_client = match sqlx::query_as!(
+        OAuthClient,
+        "INSERT INTO oauth_clients (client_id,client_secret,name,redirect_uri,grant_types,scope,user_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *",
+        Uuid::new_v4(),
+        generate_token(64),
+        data.name.clone(),
+        data.redirect_uri.clone(),
+        data.grant_types.clone(),
+        data.scope.clone(),
+        auth_guard.user.id
+    )
+    .fetch_one(pool.as_ref())
+    .await
+    {
+        Ok(oauth_client) => oauth_client,
+        Err(e) => {
+            return HttpResponse::UnprocessableEntity()
+                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+        }
+    };
+
+    HttpResponse::Ok().json(serde_json::json!(oauth_client))
+}
+
 pub fn auth_config(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("auth")
             .service(register_user)
             .service(login_user)
             .service(refresh_access_token)
-            .service(get_me_handler),
+            .service(get_me_handler)
+            .service(create_new_client),
     );
 }
