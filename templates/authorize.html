@@ -1,0 +1,57 @@
+{% extends "layout.html" %}
+
+{% block title %}Authorize{% endblock title%}
+
+{% block body %}
+<div class="flex items-center justify-center min-h-screen min-w-screen">
+    <div class="grow container mx-auto px-4 md:px-0">
+        <div class="card w-96 lg:w-2/5 bg-base-100 shadow-xl mx-auto">
+            <h1 class="font-black mx-auto mt-10 text-2xl">ChunkVault</h1>
+            <div class="card-body">
+                <h3 class="mx-auto">Authorize</h3>
+                <h2 class="card-title mx-auto text-center">"{{app_name}}"</h2>
+                <h3 class="mx-auto text-center">for the following permissions</h3>
+                <form id="authorizeForm" action="" method="post" class="form-control gap-4 mt-4">
+                    {% for scope in scopes %}
+                        <label class="label cursor-pointer">
+                            <span class="label-text capitalize">{{scope | replace(from="-", to=" ")}}</span> 
+                            <input id="{{scope}}" name="{{scope}}" type="checkbox" checked="checked" class="checkbox" />
+                        </label>
+                    {% endfor %}
+                    <input type="hidden" id="scopes" name="scopes" />
+                    <button type="submit" class="btn btn-primary">Authorize</button>
+                    <a href="/auth/login" class="btn btn-secondary">Cancel</a>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock body %}
+
+{% block script %}
+<script>
+    function checkAndPushScope(scope, scopesArray) {
+        const checkbox = document.getElementById(scope);
+        if (checkbox.checked) {
+            scopesArray.push(scope);
+            document.getElementById('scopes').value = scopesArray.join(', ');
+        }
+    }
+
+    const scopesData = {{ scopes | json_encode | safe }};
+
+    document.getElementById('authorizeForm').addEventListener('submit', function(event) {
+        event.preventDefault();
+
+        const all_scopes = [];
+
+        scopesData.forEach(scope => {
+            checkAndPushScope(scope, all_scopes);
+        });
+
+        document.getElementById('scopes').value = all_scopes.join(', ');
+
+        this.submit();
+    });
+</script>
+{% endblock script %}

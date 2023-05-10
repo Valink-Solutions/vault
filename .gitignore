@@ -3,3 +3,4 @@
 .env
 *.pem
 /testing_data
+/node_modules

@@ -21,3 +21,12 @@ pub struct TokenClaims {
     pub client_id: String,
     pub scope: String,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct AuthorizeQuery {
+    pub client_id: String,
+    pub response_type: String,
+    pub redirect_uri: String,
+    pub scope: String,
+    pub state: Option<String>,
+}

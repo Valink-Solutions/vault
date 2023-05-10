@@ -29,9 +29,11 @@ pub struct FilteredUser {
 
 #[derive(Debug, Deserialize)]
 pub struct RegisterUserSchema {
-    pub name: String,
+    pub username: String,
     pub email: String,
+    pub confirm_email: String,
     pub password: String,
+    pub confirm_password: String,
 }
 
 #[derive(Debug, Deserialize)]

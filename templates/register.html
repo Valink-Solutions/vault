@@ -1,0 +1,54 @@
+{% extends "layout.html" %}
+
+{% block title %}Register{% endblock title%}
+
+{% block body %}
+<div class="flex items-center justify-center min-h-screen min-w-screen">
+    <div class="grow container mx-auto px-4 md:px-0">
+        <div class="card w-96 lg:w-2/5 bg-base-100 shadow-xl mx-auto">
+            <h1 class="font-black mx-auto mt-10 text-2xl">ChunkVault</h1>
+            <div class="card-body">
+                <h2 class="card-title mx-auto">Register</h2>
+                <form hx-post="/auth/register" hx-encoding="application/json" class="form-control gap-4" onsubmit="return validateForm(event);">
+                    <input id="username" name="username" type="text" placeholder="Enter username..." class="input-bordered input w-full" />
+                    <div class="flex flex-col lg:flex-row gap-4">
+                        <input id="email" name="email" type="email" placeholder="Enter email..." class="input-bordered input w-full" />
+                        <input id="confirm-email" name="confirm-email" type="email" placeholder="Re-enter email..." class="input-bordered input w-full" />
+                    </div>
+                    <div class="flex flex-col lg:flex-row gap-4">
+                        <input id="password" name="password" type="password" placeholder="Enter password..." class="input-bordered input w-full" />
+                        <input id="confirm-password" name="confirm-password" type="password" placeholder="Re-enter password..." class="input-bordered input w-full" />
+                    </div>
+                    <button type="submit" class="btn btn-primary">Register</button>
+                    <span class="text-xs mx-auto">Already have an account <a href="/auth/login" class="underline">Login Here</a></span>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock body %}
+
+{% block script %}
+<script>
+    function validateForm(evt) {
+        const email = document.getElementById('email').value;
+        const confirmEmail = document.getElementById('confirm-email').value;
+        const password = document.getElementById('password').value;
+        const confirmPassword = document.getElementById('confirm-password').value;
+
+        if (email !== confirmEmail) {
+            alert('Emails do not match.');
+            evt.preventDefault();
+            return false;
+        }
+
+        if (password !== confirmPassword) {
+            alert('Passwords do not match.');
+            evt.preventDefault();
+            return false;
+        }
+
+        return true;
+    }
+</script>
+{% endblock script %}

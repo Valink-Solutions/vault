@@ -1,0 +1,148 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+  font-family: 'Martian Mono', monospace;
+}
+
+[data-theme="neubrutalism"] .btn {
+  border-width: 5px;
+  border-color: black;
+  box-shadow: 5px 5px 0px 0px rgba(0, 0, 0, 1);
+  font-weight: 800;
+}
+
+[data-theme="neubrutalism"] .btn:hover {
+  border-color: black !important;
+}
+
+[data-theme="neubrutalism"] .card,
+[data-theme="neubrutalism"] .modal,
+[data-theme="neubrutalism"] .panel {
+  border-width: 5px;
+  border-color: black !important;
+  box-shadow: 10px 10px 0px 0px rgba(0, 0, 0, 1);
+}
+
+[data-theme="neubrutalism"] .input,
+[data-theme="neubrutalism"] .input:focus {
+  border-width: 5px;
+  border-color: black !important;
+  box-shadow: 5px 5px 0px 0px rgba(0, 0, 0, 1);
+  outline: none;
+}
+
+[data-theme="neubrutalism"] .form-input,
+[data-theme="neubrutalism"] .form-input:focus {
+  border-width: 5px;
+  border-color: black !important;
+  box-shadow: 5px 5px 0px 0px rgba(0, 0, 0, 1);
+}
+
+[data-theme="neubrutalism"] .input-bordered {
+  border-color: black !important;
+  --tw-border-opacity: 1;
+}
+
+[data-theme="neubrutalism"] .select,
+[data-theme="neubrutalism"] .select:focus {
+  border-width: 5px;
+  border-color: black !important;
+  box-shadow: 5px 5px 0px 0px rgba(0,0,0,1);
+  outline: none;
+}
+
+[data-theme="neubrutalism"] .select-bordered {
+  border-color: black !important;
+  --tw-border-opacity: 1;
+  outline: none;
+}
+
+[data-theme="neubrutalism"] .checkbox {
+  width: 30px;
+  height: 30px;
+  border-width: 5px;
+  border-color: black !important;
+  background-color: white;
+  outline: none !important;
+}
+
+[data-theme="neubrutalism"] .checkbox:focus {
+  outline: none !important;
+}
+
+[data-theme="neubrutalism"] .checkbox:checked {
+  background-color: black !important;
+  border: none;
+  outline: none !important;
+}
+
+
+
+/* @layer base {
+  @font-face {
+    font-family: "Metropolis";
+    src: local("Metropolis"),
+      url("/fonts/Metropolis-Regular.woff") format("woff"),
+      url("/fonts/Metropolis-Regular.woff2") format("woff");
+  }
+  @font-face {
+    font-family: "Metropolis-Italic";
+    src: local("Metropolis-Italic"),
+      url("/fonts/Metropolis-RegularItalic.woff") format("woff"),
+      url("/fonts/Metropolis-RegularItalic.woff2") format("woff");
+  }
+  @font-face {
+    font-family: "Metropolis-Black";
+    src: local("Metropolis-Black"),
+      url("/fonts/Metropolis-Black.woff") format("woff"),
+      url("/fonts/Metropolis-Black.woff2") format("woff");
+  }
+  @font-face {
+    font-family: "Metropolis-Black-Italic";
+    src: local("Metropolis-Black-Italic"),
+      url("/fonts/Metropolis-BlackItalic.woff") format("woff"),
+      url("/fonts/Metropolis-BlackItalic.woff2") format("woff");
+  }
+  @font-face {
+    font-family: "Metropolis-Bold";
+    src: local("Metropolis-Bold"),
+      url("/fonts/Metropolis-Bold.woff") format("woff"),
+      url("/fonts/Metropolis-Bold.woff2") format("woff");
+  }
+  @font-face {
+    font-family: "Metropolis-Bold-Italic";
+    src: local("Metropolis-Bold-Italic"),
+      url("/fonts/Metropolis-BoldItalic.woff") format("woff"),
+      url("/fonts/Metropolis-BoldItalic.woff2") format("woff");
+  }
+  @font-face {
+    font-family: "Metropolis-SemiBold";
+    src: local("Metropolis-SemiBold"),
+      url("/fonts/Metropolis-SemiBold.woff") format("woff"),
+      url("/fonts/Metropolis-SemiBold.woff2") format("woff");
+  }
+  @font-face {
+    font-family: "Metropolis-SemiBold-Italic";
+    src: local("Metropolis-SemiBold-Italic"),
+      url("/fonts/Metropolis-SemiBoldItalic.woff") format("woff"),
+      url("/fonts/Metropolis-SemiBoldItalic.woff2") format("woff");
+  }
+  @font-face {
+    font-family: "Metropolis-Light";
+    src: local("Metropolis-Light"),
+      url("/fonts/Metropolis-Light.woff") format("woff"),
+      url("/fonts/Metropolis-Light.woff2") format("woff");
+  }
+  @font-face {
+    font-family: "Metropolis-Light-Italic";
+    src: local("Metropolis-Light-Italic"),
+      url("/fonts/Metropolis-LightItalic.woff") format("woff"),
+      url("/fonts/Metropolis-LightItalic.woff2") format("woff");
+  }
+
+  html {
+    font-family: "Metropolis", system-ui, sans-serif;
+  }
+} */

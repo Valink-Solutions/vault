@@ -1,0 +1,22 @@
+{% extends "layout.html" %}
+
+{% block title %}Login{% endblock title%}
+
+{% block body %}
+<div class="flex items-center justify-center min-h-screen min-w-screen">
+    <div class="grow container mx-auto px-4 md:px-0">
+        <div class="card w-96 lg:w-2/5 bg-base-100 shadow-xl mx-auto">
+            <h1 class="font-black mx-auto mt-10 text-2xl">ChunkVault</h1>
+            <div class="card-body">
+                <h2 class="card-title mx-auto">Login</h2>
+                <form hx-post="/auth/login" hx-encoding="application/json" class="form-control gap-4">
+                    <input id="email" name="email" type="email" placeholder="Enter your email..." class="input-bordered input w-full" />
+                    <input id="password" name="password" type="password" placeholder="Enter your password..." class="input-bordered input w-full" />
+                    <button type="submit" class="btn btn-primary">Login</button>
+                    <span class="text-xs mx-auto">Need an account <a href="/auth/register" class="underline">Register Here</a></span>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock body %}

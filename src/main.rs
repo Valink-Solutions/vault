@@ -5,6 +5,7 @@ use sqlx::postgres::PgPoolOptions;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
+use tera::Tera;
 use vault::auth::utils::create_vault_client_if_not_exists;
 use vault::database::check_for_migrations;
 use vault::object::create_object_store;
@@ -72,6 +73,14 @@ async fn main() -> std::io::Result<()> {
     info!("Starting the vault HTTP Server");
 
     HttpServer::new(move || {
+        let tera = match Tera::new("templates/**/*.html") {
+            Ok(t) => t,
+            Err(e) => {
+                println!("Parsing error(s): {}", e);
+                ::std::process::exit(1);
+            }
+        };
+
         App::new()
             .wrap(Logger::default())
             .configure(vault::routes::auth_config)
@@ -79,6 +88,8 @@ async fn main() -> std::io::Result<()> {
             .configure(vault::routes::versions_config)
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(object_store.clone()))
+            .app_data(web::Data::new(tera.clone()))
+            .service(actix_files::Files::new("/static", "./static").show_files_listing())
     })
     .bind(("127.0.0.1", 8080))?
     .run()

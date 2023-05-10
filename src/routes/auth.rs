@@ -1,6 +1,6 @@
 use std::env;
 
-use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder};
+use actix_web::{get, post, web, Error, HttpRequest, HttpResponse, Responder};
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
@@ -11,6 +11,7 @@ use uuid::Uuid;
 use crate::{
     auth::{
         middleware::AuthMiddleware,
+        schemas::AuthorizeQuery,
         token::{generate_jwt_token, generate_token},
     },
     database::models::{
@@ -31,11 +32,47 @@ fn filter_user_record(user: &User) -> FilteredUser {
 
 #[post("/register")]
 async fn register_user(
-    body: web::Json<RegisterUserSchema>,
+    body: web::Either<web::Json<RegisterUserSchema>, web::Form<RegisterUserSchema>>,
     pool: web::Data<PgPool>,
+    tmpl: web::Data<tera::Tera>,
 ) -> impl Responder {
+    let ctx = tera::Context::new();
+    let rendered_html = match tmpl
+        .render("components/register_success.html", &ctx)
+        .map_err(|_| actix_web::error::ErrorInternalServerError("Template error"))
+    {
+        Ok(data) => data,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(serde_json::json!({"status": "error","message": format_args!("{:?}", e)}));
+        }
+    };
+
+    let RegisterUserSchema {
+        username,
+        email,
+        confirm_email,
+        password,
+        confirm_password,
+    } = match body {
+        web::Either::Left(json) => json.into_inner(),
+        web::Either::Right(form) => form.into_inner(),
+    };
+
+    // Check if emails match
+    if email != confirm_email {
+        return HttpResponse::BadRequest()
+            .json(serde_json::json!({"status": "fail", "message": "Emails do not match"}));
+    }
+
+    // Check if passwords match
+    if password != confirm_password {
+        return HttpResponse::BadRequest()
+            .json(serde_json::json!({"status": "fail", "message": "Passwords do not match"}));
+    }
+
     let exists: bool = sqlx::query("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)")
-        .bind(body.email.to_owned())
+        .bind(email.to_owned())
         .fetch_one(pool.as_ref())
         .await
         .unwrap()
@@ -49,15 +86,15 @@ async fn register_user(
 
     let salt = SaltString::generate(&mut OsRng);
     let hashed_password = Argon2::default()
-        .hash_password(body.password.as_bytes(), &salt)
+        .hash_password(password.as_bytes(), &salt)
         .expect("Error while hashing password");
 
     let query_result = sqlx::query_as!(
         User,
         "INSERT INTO users (id,username,email,password_hash,role,created_at,updated_at) VALUES ($1, $2, $3, $4, $5, $6, $6) RETURNING *",
         uuid::Uuid::new_v4(),
-        body.name.to_string(),
-        body.email.to_string().to_lowercase(),
+        username.to_string(),
+        email.to_string().to_lowercase(),
         hashed_password.to_string(),
         "user",
         chrono::Utc::now().naive_utc()
@@ -67,11 +104,13 @@ async fn register_user(
 
     match query_result {
         Ok(user) => {
-            let user_response = serde_json::json!({"status": "success","data": serde_json::json!({
+            let _user_response = serde_json::json!({"status": "success","data": serde_json::json!({
                 "user": filter_user_record(&user)
             })});
 
-            return HttpResponse::Ok().json(user_response);
+            return HttpResponse::Ok()
+                .content_type("text/html")
+                .body(rendered_html);
         }
         Err(e) => {
             return HttpResponse::InternalServerError()
@@ -81,11 +120,19 @@ async fn register_user(
 }
 
 #[post("/login")]
-async fn login_user(body: web::Json<LoginUserSchema>, pool: web::Data<PgPool>) -> impl Responder {
+async fn login_user(
+    body: web::Either<web::Json<LoginUserSchema>, web::Form<LoginUserSchema>>,
+    pool: web::Data<PgPool>,
+) -> impl Responder {
+    let LoginUserSchema { email, password } = match body {
+        web::Either::Left(json) => json.into_inner(),
+        web::Either::Right(form) => form.into_inner(),
+    };
+
     let query_result = sqlx::query_as!(
         User,
         "SELECT * FROM users WHERE email = $1",
-        body.email.to_string().to_lowercase()
+        email.to_lowercase()
     )
     .fetch_optional(pool.as_ref())
     .await
@@ -102,7 +149,7 @@ async fn login_user(body: web::Json<LoginUserSchema>, pool: web::Data<PgPool>) -
     let parsed_hash = PasswordHash::new(&user.password_hash).unwrap();
 
     let is_valid = Argon2::default()
-        .verify_password(body.password.as_bytes(), &parsed_hash)
+        .verify_password(password.as_bytes(), &parsed_hash)
         .is_ok();
 
     if !is_valid {
@@ -318,11 +365,78 @@ async fn create_new_client(
     HttpResponse::Ok().json(serde_json::json!(oauth_client))
 }
 
+#[get("/login")]
+async fn get_login_page(tmpl: web::Data<tera::Tera>) -> Result<HttpResponse, Error> {
+    let ctx = tera::Context::new();
+    let rendered_html = tmpl
+        .render("login.html", &ctx)
+        .map_err(|_| actix_web::error::ErrorInternalServerError("Template error"))?;
+
+    Ok(HttpResponse::Ok()
+        .content_type("text/html")
+        .body(rendered_html))
+}
+
+#[get("/register")]
+async fn get_register_page(tmpl: web::Data<tera::Tera>) -> Result<HttpResponse, Error> {
+    let ctx = tera::Context::new();
+    let rendered_html = tmpl
+        .render("register.html", &ctx)
+        .map_err(|_| actix_web::error::ErrorInternalServerError("Template error"))?;
+
+    Ok(HttpResponse::Ok()
+        .content_type("text/html")
+        .body(rendered_html))
+}
+
+#[get("/authorize")]
+async fn get_authorization(
+    tmpl: web::Data<tera::Tera>,
+    pool: web::Data<PgPool>,
+    query: web::Query<AuthorizeQuery>,
+) -> Result<HttpResponse, Error> {
+    let info = query.into_inner();
+
+    let client_uuid = Uuid::parse_str(&info.client_id).unwrap();
+
+    let client = sqlx::query!(
+        "SELECT name,scope FROM oauth_clients WHERE client_id = $1",
+        client_uuid
+    )
+    .fetch_one(pool.as_ref())
+    .await
+    .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
+
+    let mut ctx = tera::Context::new();
+
+    ctx.insert("app_name", &client.name);
+    ctx.insert(
+        "scopes",
+        &serde_json::json!(&client
+            .scope
+            .unwrap_or("read,write".to_string())
+            .split(',')
+            .map(|s| s.to_string())
+            .collect::<Vec<String>>()),
+    );
+
+    let rendered_html = tmpl
+        .render("authorize.html", &ctx)
+        .map_err(|_| actix_web::error::ErrorInternalServerError("Template error"))?;
+
+    Ok(HttpResponse::Ok()
+        .content_type("text/html")
+        .body(rendered_html))
+}
+
 pub fn auth_config(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("auth")
+            .service(get_authorization)
             .service(register_user)
+            .service(get_register_page)
             .service(login_user)
+            .service(get_login_page)
             .service(refresh_access_token)
             .service(get_me_handler)
             .service(create_new_client),

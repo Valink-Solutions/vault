@@ -27,7 +27,7 @@ pub fn create_object_store() -> Result<Box<dyn ObjectStore>, String> {
         "local" => {
             info!("Initializing Local Storage Driver.");
             let local_path =
-                env::var("LOCAL_STORAGE_PATH").expect("LOCAL_STORAGE_PATH must be set");
+                env::var("LOCAL_STORAGE_PATH").unwrap_or_else(|_| "./data".to_string());
             let local = LocalFileSystem::new_with_prefix(local_path).unwrap();
             Ok(Box::new(local))
         }
