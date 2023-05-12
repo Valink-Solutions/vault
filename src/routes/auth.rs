@@ -14,11 +14,12 @@ use uuid::Uuid;
 use crate::{
     auth::{
         middleware::{check_for_user, AuthMiddleware},
-        schemas::{AcceptedAuthorization, AuthorizeQuery, LoginQuery},
+        schemas::{AcceptedAuthorization, AuthorizeQuery, LoginQuery, TradeTokenQuery},
         token::{generate_jwt_token, generate_token},
     },
     database::models::{
-        CreateClientRequest, FilteredUser, LoginUserSchema, OAuthClient, RegisterUserSchema, User,
+        CreateClientRequest, FilteredUser, LoginUserSchema, OAuthAuthorizationToken, OAuthClient,
+        RegisterUserSchema, User,
     },
 };
 
@@ -419,7 +420,7 @@ async fn refresh_access_token(req: HttpRequest, pool: web::Data<PgPool>) -> impl
         access_token_details.token_uuid.clone(),
         client_uuid,
         user.id,
-        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60),
+        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30),
         "read,write"
     )
     .execute(pool.as_ref())
@@ -678,6 +679,147 @@ async fn get_authorization_token(
         .finish()
 }
 
+#[post("/token")]
+async fn get_access_tokens(
+    query: web::Query<TradeTokenQuery>,
+    pool: web::Data<PgPool>,
+) -> impl Responder {
+    let info = query.into_inner();
+
+    let client_id = Uuid::parse_str(&info.client_id).unwrap();
+
+    let client = match sqlx::query_as!(
+        OAuthClient,
+        "SELECT * FROM oauth_clients WHERE client_id = $1",
+        client_id
+    )
+    .fetch_one(pool.as_ref())
+    .await
+    {
+        Ok(client) => client,
+        Err(_) => {
+            return HttpResponse::UnprocessableEntity()
+                .json(serde_json::json!({"status": "error", "message": "Invalid client id"}));
+        }
+    };
+
+    let auth_code = match sqlx::query_as!(
+        OAuthAuthorizationToken,
+        "SELECT * FROM oauth_authorization_codes WHERE code = $1",
+        info.code
+    )
+    .fetch_one(pool.as_ref())
+    .await
+    {
+        Ok(auth_code) => auth_code,
+        Err(_) => {
+            return HttpResponse::UnprocessableEntity().json(
+                serde_json::json!({"status": "error", "message": "Invalid authorization code"}),
+            );
+        }
+    };
+
+    if auth_code.client_id != client.client_id {
+        return HttpResponse::UnprocessableEntity()
+            .json(serde_json::json!({"status": "error", "message": "Client does not match authorization code"}));
+    }
+
+    if info.client_secret != client.client_secret {
+        return HttpResponse::UnprocessableEntity()
+            .json(serde_json::json!({"status": "error", "message": "Client secret is incorrect"}));
+    }
+
+    if info.redirect_uri != auth_code.redirect_uri.unwrap() {
+        return HttpResponse::UnprocessableEntity()
+            .json(serde_json::json!({"status": "error", "message": "Redirect URI is unverified"}));
+    }
+
+    let mut transaction = match pool.begin().await {
+        Ok(transaction) => transaction,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(serde_json::json!({"status": "error","message": format_args!("{:?}", e)}));
+        }
+    };
+
+    let access_token_details = match generate_jwt_token(
+        auth_code.user_id,
+        client_id,
+        client.scope.clone().unwrap(),
+        30,
+    ) {
+        Ok(token_details) => token_details,
+        Err(e) => {
+            return HttpResponse::BadGateway()
+                .json(serde_json::json!({"status": "fail", "message": format_args!("{:?}", e)}));
+        }
+    };
+
+    let refresh_token = generate_token(64);
+
+    match sqlx::query!(
+        "INSERT INTO oauth_access_tokens (access_token,client_id,user_id,expires,scope) VALUES ($1, $2, $3, $4, $5)",
+        access_token_details.clone().token_uuid,
+        client_id,
+        auth_code.user_id,
+        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30),
+        client.scope.clone().unwrap()
+    )
+    .execute(&mut transaction)
+    .await
+    {
+        Ok(_) => {}
+        Err(e) => {
+            return HttpResponse::UnprocessableEntity()
+                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+        }
+    }
+
+    match sqlx::query!(
+        "INSERT INTO oauth_refresh_tokens (refresh_token,client_id,user_id,expires,scope) VALUES ($1, $2, $3, $4, $5)",
+        refresh_token.clone(),
+        client_id,
+        auth_code.user_id,
+        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60),
+        client.scope.unwrap()
+    )
+    .execute(&mut transaction)
+    .await
+    {
+        Ok(_) => {}
+        Err(e) => {
+            return HttpResponse::UnprocessableEntity()
+                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+        }
+    }
+
+    match sqlx::query!(
+        "DELETE FROM oauth_authorization_codes WHERE code = $1",
+        auth_code.code
+    )
+    .execute(&mut transaction)
+    .await
+    {
+        Ok(_) => match transaction.commit().await {
+            Ok(_) => HttpResponse::Ok().json(serde_json::json!({
+                "status": "success",
+                "token_type": "Bearer",
+                "access_token": access_token_details.token.unwrap(),
+                "refresh_token": refresh_token,
+                "expires": (chrono::Utc::now() + chrono::Duration::minutes(30)).timestamp()
+            })),
+            Err(_) => {
+                return HttpResponse::InternalServerError()
+                        .json(serde_json::json!({"status": "error","message": "Unable to grant access tokens at this time"}));
+            }
+        },
+        Err(_) => {
+            return HttpResponse::InternalServerError()
+                .json(serde_json::json!({"status": "error","message": "Unable to grant access tokens at this time"}));
+        }
+    }
+}
+
 pub fn auth_config(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("auth")
@@ -689,6 +831,7 @@ pub fn auth_config(cfg: &mut web::ServiceConfig) {
             .service(refresh_access_token)
             .service(get_me_handler)
             .service(create_new_client)
-            .service(get_authorization_token),
+            .service(get_authorization_token)
+            .service(get_access_tokens),
     );
 }

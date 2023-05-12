@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::types::chrono::DateTime;
 use uuid::Uuid;
@@ -30,8 +30,8 @@ pub struct OAuthAuthorizationToken {
     pub client_id: Uuid,
     pub redirect_uri: Option<String>,
     pub user_id: Uuid,
-    pub expires: DateTime<Utc>,
-    pub scope: String,
+    pub expires: NaiveDateTime,
+    pub scope: Option<String>,
 }
 
 #[allow(non_snake_case)]
@@ -40,7 +40,7 @@ pub struct OAuthAccessToken {
     pub access_token: String,
     pub client_id: String,
     pub user_id: Uuid,
-    pub expires: DateTime<Utc>,
+    pub expires: NaiveDateTime,
     pub scope: String,
 }
 
@@ -50,6 +50,6 @@ pub struct OAuthRefreshToken {
     pub refresh_token: String,
     pub client_id: String,
     pub user_id: Uuid,
-    pub expires: DateTime<Utc>,
+    pub expires: NaiveDateTime,
     pub scope: String,
 }
