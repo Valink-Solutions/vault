@@ -10,7 +10,8 @@ use vault::auth::utils::create_vault_client_if_not_exists;
 use vault::database::check_for_migrations;
 use vault::object::create_object_store;
 use vault::tasks::{
-    delete_old_access_tokens, delete_old_refresh_tokens, delete_queued_worlds, TaskRunner,
+    delete_old_access_tokens, delete_old_authorization_codes, delete_old_refresh_tokens,
+    delete_queued_worlds, TaskRunner,
 };
 
 #[actix_web::main]
@@ -40,6 +41,15 @@ async fn main() -> std::io::Result<()> {
     let object_store = Arc::new(create_object_store().expect("Failed to create object store"));
 
     let runner = TaskRunner::new();
+
+    let cloned_pool = pool.clone();
+    runner.run_task(std::time::Duration::from_secs(15 * 60), move || {
+        let inner_cloned_pool = cloned_pool.clone();
+
+        async move {
+            delete_old_authorization_codes(&inner_cloned_pool).await;
+        }
+    });
 
     let cloned_pool = pool.clone();
     runner.run_task(std::time::Duration::from_secs(15 * 60), move || {

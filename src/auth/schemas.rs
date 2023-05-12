@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::database::models::User;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TokenDetails {
     pub token: Option<String>,
@@ -22,11 +24,28 @@ pub struct TokenClaims {
     pub scope: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AuthorizeQuery {
     pub client_id: String,
     pub response_type: String,
     pub redirect_uri: String,
     pub scope: String,
     pub state: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AcceptedAuthorization {
+    pub client_id: String,
+    pub scopes: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LoginQuery {
+    pub redirect_uri: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UserInfo {
+    pub user: User,
+    pub scope: Vec<String>,
 }

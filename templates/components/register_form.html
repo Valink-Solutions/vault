@@ -1,0 +1,21 @@
+<form hx-post="/auth/register" hx-encoding="application/json" class="form-control gap-4" onsubmit="return validateForm(event);">
+
+    {% if error %}
+    <div class="flex flex-col border-[5px] bg-error border-error bg-opacity-40 text-center p-4 gap-4">
+        <h1 class="font-bold">Error</h1>
+        <span>{{error}}</span>
+    </div>
+    {% endif %}
+
+    <input id="username" name="username" type="text" placeholder="Enter username..." class="input-bordered input w-full" />
+    <div class="flex flex-col lg:flex-row gap-4">
+        <input id="email" name="email" type="email" placeholder="Enter email..." class="input-bordered input w-full" />
+        <input id="confirm_email" name="confirm_email" type="email" placeholder="Re-enter email..." class="input-bordered input w-full" />
+    </div>
+    <div class="flex flex-col lg:flex-row gap-4">
+        <input id="password" name="password" type="password" placeholder="Enter password..." class="input-bordered input w-full" />
+        <input id="confirm_password" name="confirm_password" type="password" placeholder="Re-enter password..." class="input-bordered input w-full" />
+    </div>
+    <button type="submit" class="btn btn-primary">Register</button>
+    <span class="text-xs mx-auto">Already have an account <a href="/auth/login" class="underline">Login Here</a></span>
+</form>

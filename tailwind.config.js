@@ -58,6 +58,10 @@ module.exports = {
 				'neu-pressed': '3px 3px 0 black',
 				'neu-card': '10px 10px 0 black'
 			},
+      width: {
+        '120': '30rem',
+        '144': '36rem',
+      }
     },
   },
   plugins: [

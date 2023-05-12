@@ -1,6 +1,9 @@
 use std::env;
 
-use actix_web::{get, post, web, Error, HttpRequest, HttpResponse, Responder};
+use actix_web::{
+    cookie::{Cookie, SameSite},
+    get, post, web, Error, HttpRequest, HttpResponse, Responder,
+};
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
@@ -10,8 +13,8 @@ use uuid::Uuid;
 
 use crate::{
     auth::{
-        middleware::AuthMiddleware,
-        schemas::AuthorizeQuery,
+        middleware::{check_for_user, AuthMiddleware},
+        schemas::{AcceptedAuthorization, AuthorizeQuery, LoginQuery},
         token::{generate_jwt_token, generate_token},
     },
     database::models::{
@@ -36,17 +39,7 @@ async fn register_user(
     pool: web::Data<PgPool>,
     tmpl: web::Data<tera::Tera>,
 ) -> impl Responder {
-    let ctx = tera::Context::new();
-    let rendered_html = match tmpl
-        .render("components/register_success.html", &ctx)
-        .map_err(|_| actix_web::error::ErrorInternalServerError("Template error"))
-    {
-        Ok(data) => data,
-        Err(e) => {
-            return HttpResponse::InternalServerError()
-                .json(serde_json::json!({"status": "error","message": format_args!("{:?}", e)}));
-        }
-    };
+    let mut ctx = tera::Context::new();
 
     let RegisterUserSchema {
         username,
@@ -71,17 +64,66 @@ async fn register_user(
             .json(serde_json::json!({"status": "fail", "message": "Passwords do not match"}));
     }
 
-    let exists: bool = sqlx::query("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)")
+    let email_exists: bool = sqlx::query("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)")
         .bind(email.to_owned())
         .fetch_one(pool.as_ref())
         .await
         .unwrap()
         .get(0);
 
-    if exists {
-        return HttpResponse::Conflict().json(
-            serde_json::json!({"status": "fail","message": "User with that email already exists"}),
+    let username_exists: bool =
+        sqlx::query("SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)")
+            .bind(username.to_owned())
+            .fetch_one(pool.as_ref())
+            .await
+            .unwrap()
+            .get(0);
+
+    if email_exists {
+        ctx.insert("error", "User with that email already exists");
+        let rendered_html = match tmpl
+            .render("components/register_form.html", &ctx)
+            .map_err(|_| actix_web::error::ErrorInternalServerError("Template error"))
+        {
+            Ok(data) => data,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(
+                    serde_json::json!({"status": "error","message": format_args!("{:?}", e)}),
+                );
+            }
+        };
+
+        return HttpResponse::Ok()
+            .content_type("text/html")
+            .body(rendered_html);
+        // return HttpResponse::Conflict().json(
+        //     serde_json::json!({"status": "fail","message": "User with that email already exists"}),
+        // );
+    }
+
+    if username_exists {
+        ctx.insert(
+            "error",
+            &format!("User with username '{}' already exists", username),
         );
+        let rendered_html = match tmpl
+            .render("components/register_form.html", &ctx)
+            .map_err(|_| actix_web::error::ErrorInternalServerError("Template error"))
+        {
+            Ok(data) => data,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(
+                    serde_json::json!({"status": "error","message": format_args!("{:?}", e)}),
+                );
+            }
+        };
+
+        return HttpResponse::Ok()
+            .content_type("text/html")
+            .body(rendered_html);
+        // return HttpResponse::Conflict().json(
+        //     serde_json::json!({"status": "fail", "message": format!("User with username '{}' already exists", username)}),
+        // );
     }
 
     let salt = SaltString::generate(&mut OsRng);
@@ -108,6 +150,18 @@ async fn register_user(
                 "user": filter_user_record(&user)
             })});
 
+            let rendered_html = match tmpl
+                .render("components/register_success.html", &ctx)
+                .map_err(|_| actix_web::error::ErrorInternalServerError("Template error"))
+            {
+                Ok(data) => data,
+                Err(e) => {
+                    return HttpResponse::InternalServerError().json(
+                        serde_json::json!({"status": "error","message": format_args!("{:?}", e)}),
+                    );
+                }
+            };
+
             return HttpResponse::Ok()
                 .content_type("text/html")
                 .body(rendered_html);
@@ -123,6 +177,7 @@ async fn register_user(
 async fn login_user(
     body: web::Either<web::Json<LoginUserSchema>, web::Form<LoginUserSchema>>,
     pool: web::Data<PgPool>,
+    query: web::Query<LoginQuery>,
 ) -> impl Responder {
     let LoginUserSchema { email, password } = match body {
         web::Either::Left(json) => json.into_inner(),
@@ -162,8 +217,24 @@ async fn login_user(
 
     let client_uuid = Uuid::parse_str(&client_id).unwrap();
 
+    let client_scope = match sqlx::query!(
+        "SELECT scope FROM oauth_clients WHERE client_id = $1",
+        client_uuid
+    )
+    .fetch_one(pool.as_ref())
+    .await
+    {
+        Ok(row) => row
+            .scope
+            .unwrap_or("read-worlds,write-worlds,delete-worlds".to_string()),
+        Err(_) => {
+            return HttpResponse::InternalServerError()
+                .json(serde_json::json!({"status": "fail", "message": "Please try again later."}));
+        }
+    };
+
     let access_token_details =
-        match generate_jwt_token(user.id, client_uuid, "read,write".to_string(), 30) {
+        match generate_jwt_token(user.id, client_uuid, client_scope.clone(), 30) {
             Ok(token_details) => token_details,
             Err(e) => {
                 return HttpResponse::BadGateway().json(
@@ -180,7 +251,7 @@ async fn login_user(
         client_uuid,
         user.id,
         chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30),
-        "read,write"
+        client_scope
     )
     .execute(pool.as_ref())
     .await
@@ -198,7 +269,7 @@ async fn login_user(
         client_uuid,
         user.id,
         chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60),
-        "read,write"
+        client_scope
     )
     .execute(pool.as_ref())
     .await
@@ -210,8 +281,51 @@ async fn login_user(
         }
     }
 
-    HttpResponse::Ok()
-        .json(serde_json::json!({"status": "success", "access_token": access_token_details.token.unwrap(), "refresh_token": refresh_token}))
+    let access_token = access_token_details.token.unwrap();
+
+    match query.redirect_uri.to_owned() {
+        Some(redirect_uri) => {
+            return HttpResponse::Found()
+                .append_header(("Location", redirect_uri))
+                .cookie(
+                    Cookie::build("access_token", &access_token)
+                        // .domain(env::var("APP_DOMAIN").unwrap_or("localhost:8080".to_string()))
+                        .path("/auth")
+                        .secure(true)
+                        .same_site(SameSite::Strict)
+                        .finish(),
+                )
+                .cookie(
+                    Cookie::build("refresh_token", &refresh_token)
+                        // .domain(env::var("APP_DOMAIN").unwrap_or("localhost:8080".to_string()))
+                        .path("/auth")
+                        .secure(true)
+                        .same_site(SameSite::Strict)
+                        .finish(),
+                )
+                .finish();
+        }
+        None => {
+            return HttpResponse::Ok()
+                .cookie(
+                    Cookie::build("access_token", &access_token)
+                        // .domain(env::var("APP_DOMAIN").unwrap_or("localhost:8080".to_string()))
+                        .path("/auth")
+                        .secure(true)
+                        .same_site(SameSite::Strict)
+                        .finish()
+                )
+                .cookie(
+                    Cookie::build("refresh_token", &refresh_token)
+                        // .domain(env::var("APP_DOMAIN").unwrap_or("localhost:8080".to_string()))
+                        .path("/auth")
+                        .secure(true)
+                        .same_site(SameSite::Strict)
+                        .finish()
+                )
+                .json(serde_json::json!({"status": "success", "access_token": access_token, "refresh_token": refresh_token}));
+        }
+    }
 }
 
 #[get("/refresh")]
@@ -366,8 +480,25 @@ async fn create_new_client(
 }
 
 #[get("/login")]
-async fn get_login_page(tmpl: web::Data<tera::Tera>) -> Result<HttpResponse, Error> {
-    let ctx = tera::Context::new();
+async fn get_login_page(
+    tmpl: web::Data<tera::Tera>,
+    query: web::Query<LoginQuery>,
+) -> Result<HttpResponse, Error> {
+    let mut ctx = tera::Context::new();
+    match query.redirect_uri.to_owned() {
+        Some(redirect_uri) => {
+            let params = &[("redirect_uri", redirect_uri)];
+
+            ctx.insert(
+                "login_url",
+                &format!(
+                    "/auth/login?{}",
+                    serde_urlencoded::to_string(params).unwrap()
+                ),
+            )
+        }
+        None => ctx.insert("login_url", "/auth/login"),
+    }
     let rendered_html = tmpl
         .render("login.html", &ctx)
         .map_err(|_| actix_web::error::ErrorInternalServerError("Template error"))?;
@@ -390,12 +521,48 @@ async fn get_register_page(tmpl: web::Data<tera::Tera>) -> Result<HttpResponse, 
 }
 
 #[get("/authorize")]
-async fn get_authorization(
+async fn get_authorization_page(
     tmpl: web::Data<tera::Tera>,
     pool: web::Data<PgPool>,
     query: web::Query<AuthorizeQuery>,
+    req: HttpRequest,
 ) -> Result<HttpResponse, Error> {
+    let mut ctx = tera::Context::new();
+
     let info = query.into_inner();
+
+    match check_for_user(&pool, req).await {
+        Ok(_) => {}
+        Err(_) => {
+            let params = &[(
+                "redirect_uri",
+                &format!(
+                    "/auth/authorize?{}",
+                    serde_urlencoded::to_string(&info).unwrap()
+                ),
+            )];
+
+            let redirect_uri = format!(
+                "/auth/login?{}",
+                serde_urlencoded::to_string(params).unwrap()
+            );
+
+            ctx.insert("login_url", &redirect_uri);
+
+            let rendered_html = tmpl
+                .render("login.html", &ctx)
+                .map_err(|_| actix_web::error::ErrorInternalServerError("Template error"))?;
+
+            return Ok(HttpResponse::Ok()
+                .content_type("text/html")
+                .body(rendered_html));
+
+            // return Ok(HttpResponse::SeeOther()
+            //     .append_header(("Location", redirect_uri))
+            //     .finish()
+            // )
+        }
+    };
 
     let client_uuid = Uuid::parse_str(&info.client_id).unwrap();
 
@@ -407,9 +574,8 @@ async fn get_authorization(
     .await
     .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
 
-    let mut ctx = tera::Context::new();
-
     ctx.insert("app_name", &client.name);
+    ctx.insert("client_id", &info.client_id);
     ctx.insert(
         "scopes",
         &serde_json::json!(&client
@@ -429,16 +595,83 @@ async fn get_authorization(
         .body(rendered_html))
 }
 
+#[post("/authorize")]
+async fn get_authorization_token(
+    authization_info: web::Form<AcceptedAuthorization>,
+    pool: web::Data<PgPool>,
+    req: HttpRequest,
+) -> impl Responder {
+    let user = match check_for_user(&pool, req).await {
+        Ok(info) => info.user,
+        Err(e) => {
+            return HttpResponse::UnprocessableEntity()
+                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+        }
+    };
+
+    let authization_info = authization_info.into_inner();
+
+    let client_uuid = Uuid::parse_str(&authization_info.client_id).unwrap();
+
+    let client = match sqlx::query_as!(
+        OAuthClient,
+        "SELECT * FROM oauth_clients WHERE client_id = $1",
+        client_uuid
+    )
+    .fetch_one(pool.as_ref())
+    .await
+    {
+        Ok(client) => client,
+        Err(e) => {
+            return HttpResponse::UnprocessableEntity()
+                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+        }
+    };
+
+    let authorization_code = generate_token(64);
+
+    match sqlx::query!(
+        "INSERT INTO oauth_authorization_codes (code,client_id,redirect_uri,user_id,expires,scope) VALUES ($1,$2,$3,$4,$5,$6)",
+        authorization_code,
+        client.client_id,
+        client.redirect_uri,
+        user.id,
+        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30),
+        authization_info.scopes
+    )
+    .execute(pool.as_ref())
+    .await {
+        Ok(_) => {},
+        Err(e) => {
+            return HttpResponse::UnprocessableEntity()
+                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+        }
+    }
+
+    let query = &[("code", authorization_code)];
+
+    let redirection_response = format!(
+        "{}?{}",
+        client.redirect_uri.unwrap(),
+        serde_urlencoded::to_string(query).unwrap()
+    );
+
+    HttpResponse::Found()
+        .append_header(("Location", redirection_response))
+        .finish()
+}
+
 pub fn auth_config(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("auth")
-            .service(get_authorization)
+            .service(get_authorization_page)
             .service(register_user)
             .service(get_register_page)
             .service(login_user)
             .service(get_login_page)
             .service(refresh_access_token)
             .service(get_me_handler)
-            .service(create_new_client),
+            .service(create_new_client)
+            .service(get_authorization_token),
     );
 }

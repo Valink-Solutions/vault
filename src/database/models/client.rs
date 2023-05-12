@@ -25,6 +25,17 @@ pub struct OAuthClient {
 
 #[allow(non_snake_case)]
 #[derive(Debug, Deserialize, sqlx::FromRow, Serialize, Clone)]
+pub struct OAuthAuthorizationToken {
+    pub code: String,
+    pub client_id: Uuid,
+    pub redirect_uri: Option<String>,
+    pub user_id: Uuid,
+    pub expires: DateTime<Utc>,
+    pub scope: String,
+}
+
+#[allow(non_snake_case)]
+#[derive(Debug, Deserialize, sqlx::FromRow, Serialize, Clone)]
 pub struct OAuthAccessToken {
     pub access_token: String,
     pub client_id: String,
