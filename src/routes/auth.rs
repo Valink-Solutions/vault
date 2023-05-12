@@ -745,7 +745,7 @@ async fn get_access_tokens(
     let access_token_details = match generate_jwt_token(
         auth_code.user_id,
         client_id,
-        client.scope.clone().unwrap(),
+        auth_code.scope.clone().unwrap(),
         30,
     ) {
         Ok(token_details) => token_details,
@@ -763,7 +763,7 @@ async fn get_access_tokens(
         client_id,
         auth_code.user_id,
         chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30),
-        client.scope.clone().unwrap()
+        auth_code.scope.clone().unwrap()
     )
     .execute(&mut transaction)
     .await
@@ -781,7 +781,7 @@ async fn get_access_tokens(
         client_id,
         auth_code.user_id,
         chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60),
-        client.scope.unwrap()
+        auth_code.scope.unwrap()
     )
     .execute(&mut transaction)
     .await
