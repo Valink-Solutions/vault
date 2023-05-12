@@ -52,13 +52,30 @@ async fn register_user(
         web::Either::Right(form) => form.into_inner(),
     };
 
-    // Check if emails match
+    if username.len() <= 0 || email.len() <= 0 || password.len() <= 7 {
+        ctx.insert("error", "Do not leave fields blank.");
+        let rendered_html = match tmpl
+            .render("components/register_form.html", &ctx)
+            .map_err(|_| actix_web::error::ErrorInternalServerError("Template error"))
+        {
+            Ok(data) => data,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(
+                    serde_json::json!({"status": "error","message": format_args!("{:?}", e)}),
+                );
+            }
+        };
+
+        return HttpResponse::Ok()
+            .content_type("text/html")
+            .body(rendered_html);
+    }
+
     if email != confirm_email {
         return HttpResponse::BadRequest()
             .json(serde_json::json!({"status": "fail", "message": "Emails do not match"}));
     }
 
-    // Check if passwords match
     if password != confirm_password {
         return HttpResponse::BadRequest()
             .json(serde_json::json!({"status": "fail", "message": "Passwords do not match"}));
