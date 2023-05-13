@@ -95,7 +95,17 @@ impl FromRequest for AuthMiddleware {
         };
 
         let user_exists_result = async move {
-            let user_id = user_result.await.ok();
+            let user_id = match user_result.await {
+                Ok(user_id) => user_id,
+                Err(_) => {
+                    let json_error = ErrorResponse {
+                        status: "fail".to_string(),
+                        message: "Access token is invalid or expired".to_string(),
+                    };
+
+                    return Err(ErrorUnauthorized(json_error));
+                }
+            };
 
             let query_result = sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", user_id)
                 .fetch_optional(pool.as_ref())

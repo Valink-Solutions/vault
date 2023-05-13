@@ -1,8 +1,8 @@
 use std::env;
 
 use actix_web::{
-    cookie::{Cookie, SameSite},
-    get, post, web, Error, HttpRequest, HttpResponse, Responder,
+    cookie::{time, Cookie, SameSite},
+    get, patch, post, web, Error, HttpRequest, HttpResponse, Responder,
 };
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
@@ -14,8 +14,11 @@ use uuid::Uuid;
 use crate::{
     auth::{
         middleware::{check_for_user, AuthMiddleware},
-        schemas::{AcceptedAuthorization, AuthorizeQuery, LoginQuery, TradeTokenQuery},
-        token::{generate_jwt_token, generate_token},
+        schemas::{
+            AcceptedAuthorization, AuthorizeQuery, LoginQuery, RevokeTokenQuery, TradeTokenQuery,
+            UpdatePassword,
+        },
+        token::{generate_jwt_token, generate_token, verify_jwt_token},
     },
     database::models::{
         CreateClientRequest, FilteredUser, LoginUserSchema, OAuthAuthorizationToken, OAuthClient,
@@ -311,6 +314,7 @@ async fn login_user(
                         .path("/auth")
                         .secure(true)
                         .same_site(SameSite::Strict)
+                        .max_age(time::Duration::minutes(30))
                         .finish(),
                 )
                 .cookie(
@@ -319,6 +323,7 @@ async fn login_user(
                         .path("/auth")
                         .secure(true)
                         .same_site(SameSite::Strict)
+                        .max_age(time::Duration::minutes(60))
                         .finish(),
                 )
                 .finish();
@@ -331,6 +336,7 @@ async fn login_user(
                         .path("/auth")
                         .secure(true)
                         .same_site(SameSite::Strict)
+                        .max_age(time::Duration::minutes(30))
                         .finish()
                 )
                 .cookie(
@@ -339,6 +345,7 @@ async fn login_user(
                         .path("/auth")
                         .secure(true)
                         .same_site(SameSite::Strict)
+                        .max_age(time::Duration::minutes(60))
                         .finish()
                 )
                 .json(serde_json::json!({"status": "success", "access_token": access_token, "refresh_token": refresh_token}));
@@ -465,6 +472,53 @@ async fn get_me_handler(auth_guard: AuthMiddleware) -> impl Responder {
     });
 
     HttpResponse::Ok().json(json_response)
+}
+
+#[patch("/users/update-password")]
+async fn update_current_user_password(
+    data: web::Form<UpdatePassword>,
+    pool: web::Data<PgPool>,
+    auth_guard: AuthMiddleware,
+) -> impl Responder {
+    let UpdatePassword {
+        current_password,
+        new_password,
+    } = data.into_inner();
+
+    let parsed_hash = PasswordHash::new(&auth_guard.user.password_hash).unwrap();
+
+    let is_valid = Argon2::default()
+        .verify_password(current_password.as_bytes(), &parsed_hash)
+        .is_ok();
+
+    if !is_valid {
+        return HttpResponse::BadRequest()
+            .json(serde_json::json!({"status": "fail", "message": "Invalid password."}));
+    }
+
+    let salt = SaltString::generate(&mut OsRng);
+
+    let hashed_password = Argon2::default()
+        .hash_password(new_password.as_bytes(), &salt)
+        .expect("Error while hashing password");
+
+    match sqlx::query!(
+        "UPDATE users SET password_hash = $1 WHERE id = $2",
+        hashed_password.to_string(),
+        auth_guard.user.id
+    )
+    .execute(pool.as_ref())
+    .await
+    {
+        Ok(_) => HttpResponse::Ok().json(serde_json::json!({
+            "status": "success",
+            "message": "Password updated successfully"
+        })),
+        Err(_) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "status": "fail",
+            "message": "Password updated successfully"
+        })),
+    }
 }
 
 #[post("/create-client")]
@@ -820,6 +874,125 @@ async fn get_access_tokens(
     }
 }
 
+#[post("/revoke")]
+async fn revoke_token(
+    pool: web::Data<PgPool>,
+    query: web::Query<RevokeTokenQuery>,
+    _auth_guard: AuthMiddleware,
+) -> impl Responder {
+    let info = query.into_inner();
+
+    match info.token_type_hint {
+        Some(type_hint) => {
+            if type_hint == "access_token".to_string() {
+                let access_token_details = match verify_jwt_token(&info.token) {
+                    Ok(token_details) => token_details,
+                    Err(_) => {
+                        return HttpResponse::BadRequest().json(serde_json::json!({
+                            "status": "error",
+                            "message": "Access token is invalid."
+                        }))
+                    }
+                };
+
+                match sqlx::query!(
+                    "DELETE FROM oauth_access_tokens WHERE access_token = $1",
+                    access_token_details.token_uuid
+                )
+                .execute(pool.as_ref())
+                .await
+                {
+                    Ok(result) => {
+                        if result.rows_affected() == 0 {
+                            return HttpResponse::NotFound().json(serde_json::json!({
+                                "status": "error",
+                                "message": "Access token does not exist."
+                            }));
+                        }
+                    }
+                    Err(_) => {
+                        return HttpResponse::InternalServerError().json(serde_json::json!({
+                            "status": "error",
+                            "message": "Error revoking access token, try again later."
+                        }))
+                    }
+                }
+            } else {
+                match sqlx::query!(
+                    "DELETE FROM oauth_refresh_tokens WHERE refresh_token = $1",
+                    info.token
+                )
+                .execute(pool.as_ref())
+                .await
+                {
+                    Ok(result) => {
+                        if result.rows_affected() == 0 {
+                            return HttpResponse::NotFound().json(serde_json::json!({
+                                "status": "error",
+                                "message": "Refresh token does not exist."
+                            }));
+                        }
+                    }
+                    Err(_) => {
+                        return HttpResponse::InternalServerError().json(serde_json::json!({
+                            "status": "error",
+                            "message": "Error revoking refresh token, try again later."
+                        }))
+                    }
+                }
+            }
+        }
+        None => {
+            match sqlx::query!(
+                "DELETE FROM oauth_refresh_tokens WHERE refresh_token = $1",
+                info.token
+            )
+            .execute(pool.as_ref())
+            .await
+            {
+                Ok(result) => {
+                    if !result.rows_affected() == 0 {
+                        return HttpResponse::Ok().finish();
+                    }
+                }
+                Err(_) => {
+                    return HttpResponse::InternalServerError().json(serde_json::json!({
+                        "status": "error",
+                        "message": "Error revoking refresh token, try again later."
+                    }))
+                }
+            }
+
+            let access_token_details = match verify_jwt_token(&info.token) {
+                Ok(token_details) => token_details,
+                Err(_) => return HttpResponse::Ok().finish(),
+            };
+
+            match sqlx::query!(
+                "DELETE FROM oauth_access_tokens WHERE access_token = $1",
+                access_token_details.token_uuid
+            )
+            .execute(pool.as_ref())
+            .await
+            {
+                Ok(result) => {
+                    if !result.rows_affected() == 0 {
+                        return HttpResponse::Ok().finish();
+                    }
+                }
+                Err(_) => {
+                    return HttpResponse::InternalServerError().json(serde_json::json!({
+                        "status": "error",
+                        "message": "Error revoking access token, try again later."
+                    }))
+                }
+            }
+        }
+    }
+
+    HttpResponse::Ok().finish()
+}
+
 pub fn auth_config(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("auth")
@@ -832,6 +1005,8 @@ pub fn auth_config(cfg: &mut web::ServiceConfig) {
             .service(get_me_handler)
             .service(create_new_client)
             .service(get_authorization_token)
-            .service(get_access_tokens),
+            .service(get_access_tokens)
+            .service(revoke_token)
+            .service(update_current_user_password),
     );
 }

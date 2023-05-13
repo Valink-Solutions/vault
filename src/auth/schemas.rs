@@ -51,10 +51,22 @@ pub struct UserInfo {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct UpdatePassword {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct TradeTokenQuery {
     pub grant_type: String,
     pub code: String,
     pub redirect_uri: String,
     pub client_id: String,
     pub client_secret: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RevokeTokenQuery {
+    pub token: String,
+    pub token_type_hint: Option<String>,
 }

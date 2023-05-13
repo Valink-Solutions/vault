@@ -1,6 +1,5 @@
-use chrono::{NaiveDateTime, Utc};
+use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
-use sqlx::types::chrono::DateTime;
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize)]
