@@ -22,6 +22,13 @@ pub async fn create_new_world_version(
     pool: web::Data<PgPool>,
     auth_guard: AuthMiddleware,
 ) -> impl Responder {
+    if !auth_guard.scope.contains(&String::from("backup:write")) {
+        return HttpResponse::Unauthorized().json(serde_json::json!({
+            "status": "fail",
+            "message": "You do not have the permissions to access this route"
+        }));
+    };
+
     let world_uuid = match Uuid::parse_str(&world_id) {
         Ok(uuid) => uuid,
         Err(e) => {
@@ -160,6 +167,13 @@ pub async fn get_world_versions_by_uuid(
     pool: web::Data<PgPool>,
     auth_guard: AuthMiddleware,
 ) -> impl Responder {
+    if !auth_guard.scope.contains(&String::from("backup:read")) {
+        return HttpResponse::Unauthorized().json(serde_json::json!({
+            "status": "fail",
+            "message": "You do not have the permissions to access this route"
+        }));
+    };
+
     let world_id = path_info.world_id.to_string();
     let version_id = path_info.version_id.to_string();
 
@@ -235,6 +249,13 @@ pub async fn upload_world_version(
     object_store: web::Data<Arc<Box<dyn ObjectStore>>>,
     auth_guard: AuthMiddleware,
 ) -> Result<HttpResponse, actix_web::Error> {
+    if !auth_guard.scope.contains(&String::from("backup:write")) {
+        return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
+            "status": "fail",
+            "message": "You do not have the permissions to access this route"
+        })));
+    };
+
     let world_id = path_info.world_id.to_string();
     let version_id = path_info.version_id.to_string();
 
@@ -343,6 +364,13 @@ pub async fn download_world_by_version_uuid(
     object_store: web::Data<Arc<Box<dyn ObjectStore>>>,
     auth_guard: AuthMiddleware,
 ) -> Result<HttpResponse, actix_web::Error> {
+    if !auth_guard.scope.contains(&String::from("backup:read")) {
+        return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
+            "status": "fail",
+            "message": "You do not have the permissions to access this route"
+        })));
+    };
+
     let world_id = path_info.world_id.to_string();
     let version_id = path_info.version_id.to_string();
 
@@ -411,6 +439,13 @@ pub async fn get_version_by_uuid(
     pool: web::Data<PgPool>,
     auth_guard: AuthMiddleware,
 ) -> impl Responder {
+    if !auth_guard.scope.contains(&String::from("backup:write")) {
+        return HttpResponse::Unauthorized().json(serde_json::json!({
+            "status": "fail",
+            "message": "You do not have the permissions to access this route"
+        }));
+    };
+
     let world_id = path_info.world_id.to_string();
     let version_id = path_info.version_id.to_string();
 
@@ -482,6 +517,13 @@ pub async fn delete_world_version_by_uuid(
     pool: web::Data<PgPool>,
     auth_guard: AuthMiddleware,
 ) -> impl Responder {
+    if !auth_guard.scope.contains(&String::from("backup:write")) {
+        return HttpResponse::Unauthorized().json(serde_json::json!({
+            "status": "fail",
+            "message": "You do not have the permissions to access this route"
+        }));
+    };
+
     let world_id = path_info.world_id.to_string();
     let version_id = path_info.version_id.to_string();
 
@@ -569,6 +611,13 @@ async fn update_world_version_by_uuid(
     pool: web::Data<PgPool>,
     auth_guard: AuthMiddleware,
 ) -> impl Responder {
+    if !auth_guard.scope.contains(&String::from("backup:write")) {
+        return HttpResponse::Unauthorized().json(serde_json::json!({
+            "status": "fail",
+            "message": "You do not have the permissions to access this route"
+        }));
+    };
+
     let world_id = path_info.world_id.to_string();
     let version_id = path_info.version_id.to_string();
 

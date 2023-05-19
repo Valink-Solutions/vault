@@ -19,7 +19,7 @@ async fn get_worlds_for_current_user(
     pool: web::Data<PgPool>,
     auth_guard: AuthMiddleware,
 ) -> impl Responder {
-    if !auth_guard.scope.contains(&"read-worlds".to_string()) {
+    if !auth_guard.scope.contains(&"world:read".to_string()) {
         return HttpResponse::Unauthorized().json(serde_json::json!({
             "status": "fail",
             "message": "You do not have the permissions to access this route"
@@ -71,7 +71,7 @@ async fn create_new_world(
     pool: web::Data<PgPool>,
     auth_guard: AuthMiddleware,
 ) -> impl Responder {
-    if !auth_guard.scope.contains(&String::from("write-worlds")) {
+    if !auth_guard.scope.contains(&String::from("world:write")) {
         return HttpResponse::Unauthorized().json(serde_json::json!({
             "status": "fail",
             "message": "You do not have the permissions to access this route"
@@ -113,7 +113,7 @@ async fn get_world_by_uuid(
     pool: web::Data<PgPool>,
     auth_guard: AuthMiddleware,
 ) -> impl Responder {
-    if !auth_guard.scope.contains(&String::from("read-worlds")) {
+    if !auth_guard.scope.contains(&String::from("world:read")) {
         return HttpResponse::Unauthorized().json(serde_json::json!({
             "status": "fail",
             "message": "You do not have the permissions to access this route"
@@ -162,7 +162,7 @@ async fn update_world_by_uuid(
     pool: web::Data<PgPool>,
     auth_guard: AuthMiddleware,
 ) -> impl Responder {
-    if !auth_guard.scope.contains(&String::from("write-worlds")) {
+    if !auth_guard.scope.contains(&String::from("world:write")) {
         return HttpResponse::Unauthorized().json(serde_json::json!({
             "status": "fail",
             "message": "You do not have the permissions to access this route"
@@ -224,7 +224,7 @@ async fn delete_world_by_uuid(
     pool: web::Data<PgPool>,
     auth_guard: AuthMiddleware,
 ) -> impl Responder {
-    if !auth_guard.scope.contains(&String::from("delete-worlds")) {
+    if !auth_guard.scope.contains(&String::from("world:write")) {
         return HttpResponse::Unauthorized().json(serde_json::json!({
             "status": "fail",
             "message": "You do not have the permissions to access this route"

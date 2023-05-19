@@ -1,0 +1,15 @@
+application:
+  host: 127.0.0.1
+  private_key: "./private_key.pem"
+  public_key: "./public_key.pem"
+  base_url: "http://localhost:8080"
+database:
+  url: "postgres://postgres:password@localhost:5432/vault"
+storage:
+  driver: "local"
+  path: "./testing_data"
+admin:
+  email: "admin@valink.io"
+  password: "Password123"
+  client_id: "1c5d66ea-0b0e-42a0-b57d-757da66f282f"
+  client_secret: "1af64f63cf18a69dbf0bf3ce3a2698118646ec1e"

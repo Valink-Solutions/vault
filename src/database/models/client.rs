@@ -2,14 +2,6 @@ use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Serialize, Deserialize)]
-pub struct CreateClientRequest {
-    pub name: String,
-    pub redirect_uri: String,
-    pub grant_types: String,
-    pub scope: String,
-}
-
 #[allow(non_snake_case)]
 #[derive(Debug, Deserialize, sqlx::FromRow, Serialize, Clone)]
 pub struct OAuthClient {

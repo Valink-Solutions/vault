@@ -2,11 +2,11 @@ use actix_web::{middleware::Logger, web, App, HttpServer};
 use env_logger::Env;
 use log::info;
 use sqlx::postgres::PgPoolOptions;
-use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 use tera::Tera;
 use vault::auth::utils::create_vault_client_if_not_exists;
+use vault::configuration::get_configuration;
 use vault::database::check_for_migrations;
 use vault::object::create_object_store;
 use vault::tasks::{
@@ -16,11 +16,16 @@ use vault::tasks::{
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    dotenvy::dotenv().ok();
+    // dotenvy::dotenv().ok();
 
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
-    let database_url = env::var("DATABASE_URL").expect("No Database URL");
+    let configuration = get_configuration().expect("Failed to read configuration.");
+
+    let address = format!(
+        "{}:{}",
+        configuration.application.host, configuration.application.port
+    );
 
     check_for_migrations()
         .await
@@ -30,15 +35,21 @@ async fn main() -> std::io::Result<()> {
         .min_connections(0)
         .max_connections(16)
         .max_lifetime(Some(Duration::from_secs(60 * 60)))
-        .connect(&database_url)
+        .connect(&configuration.database.url)
         .await
         .expect("Error Creating database connection");
 
-    create_vault_client_if_not_exists(&pool.clone())
-        .await
-        .expect("An error occurred while running migrations.");
+    create_vault_client_if_not_exists(
+        &pool.clone(),
+        configuration.application.base_url.clone(),
+        configuration.admin.clone(),
+    )
+    .await
+    .expect("An error occurred while running migrations.");
 
-    let object_store = Arc::new(create_object_store().expect("Failed to create object store"));
+    let object_store = Arc::new(
+        create_object_store(configuration.storage.clone()).expect("Failed to create object store"),
+    );
 
     let runner = TaskRunner::new();
 
@@ -80,7 +91,7 @@ async fn main() -> std::io::Result<()> {
         }
     });
 
-    info!("Starting the vault HTTP Server");
+    info!("Starting the vault HTTP Server at {}", address);
 
     HttpServer::new(move || {
         let tera = match Tera::new("templates/**/*.html") {
@@ -94,14 +105,17 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .wrap(Logger::default())
             .configure(vault::routes::auth_config)
+            .configure(vault::routes::dashboard_config)
             .configure(vault::routes::worlds_config)
             .configure(vault::routes::versions_config)
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(object_store.clone()))
             .app_data(web::Data::new(tera.clone()))
+            .app_data(web::Data::new(configuration.clone()))
             .service(actix_files::Files::new("/static", "./static").show_files_listing())
+            .service(vault::routes::init_handshake)
     })
-    .bind(("127.0.0.1", 8080))?
+    .bind(address)?
     .run()
     .await
 }

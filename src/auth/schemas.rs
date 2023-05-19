@@ -33,10 +33,37 @@ pub struct AuthorizeQuery {
     pub state: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AuthorizeCreateClientQuery {
+    pub client_name: Option<String>,
+    pub response_type: String,
+    pub grant_types: Option<String>,
+    pub redirect_uri: String,
+    pub scope: String,
+    pub state: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct AcceptedAuthorization {
     pub client_id: String,
     pub scopes: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct CreateClientRequest {
+    pub name: String,
+    pub redirect_uri: String,
+    pub grant_types: String,
+    pub scope: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AcceptedCreateClientAuthorization {
+    pub client_name: String,
+    pub redirect_uri: String,
+    pub grant_types: String,
+    pub scopes: String,
+    pub state: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

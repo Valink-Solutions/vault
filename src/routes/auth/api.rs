@@ -2,7 +2,7 @@ use std::env;
 
 use actix_web::{
     cookie::{time, Cookie, SameSite},
-    get, patch, post, web, Error, HttpRequest, HttpResponse, Responder,
+    get, patch, post, web, HttpRequest, HttpResponse, Responder,
 };
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
@@ -15,27 +15,17 @@ use crate::{
     auth::{
         middleware::{check_for_user, AuthMiddleware},
         schemas::{
-            AcceptedAuthorization, AuthorizeQuery, LoginQuery, RevokeTokenQuery, TradeTokenQuery,
-            UpdatePassword,
+            AcceptedAuthorization, AcceptedCreateClientAuthorization, CreateClientRequest,
+            LoginQuery, RevokeTokenQuery, TradeTokenQuery, UpdatePassword,
         },
         token::{generate_jwt_token, generate_token, verify_jwt_token},
+        utils::filter_user_record,
     },
+    configuration::Settings,
     database::models::{
-        CreateClientRequest, FilteredUser, LoginUserSchema, OAuthAuthorizationToken, OAuthClient,
-        RegisterUserSchema, User,
+        LoginUserSchema, OAuthAuthorizationToken, OAuthClient, RegisterUserSchema, User,
     },
 };
-
-fn filter_user_record(user: &User) -> FilteredUser {
-    FilteredUser {
-        id: user.id.to_string(),
-        username: user.username.to_string(),
-        email: user.email.to_string(),
-        role: user.role.to_owned(),
-        createdAt: user.created_at.unwrap(),
-        updatedAt: user.updated_at.unwrap(),
-    }
-}
 
 #[post("/register")]
 async fn register_user(
@@ -311,7 +301,7 @@ async fn login_user(
                 .cookie(
                     Cookie::build("access_token", &access_token)
                         // .domain(env::var("APP_DOMAIN").unwrap_or("localhost:8080".to_string()))
-                        .path("/auth")
+                        .path("/")
                         .secure(true)
                         .same_site(SameSite::Strict)
                         .max_age(time::Duration::minutes(30))
@@ -320,7 +310,7 @@ async fn login_user(
                 .cookie(
                     Cookie::build("refresh_token", &refresh_token)
                         // .domain(env::var("APP_DOMAIN").unwrap_or("localhost:8080".to_string()))
-                        .path("/auth")
+                        .path("/")
                         .secure(true)
                         .same_site(SameSite::Strict)
                         .max_age(time::Duration::minutes(60))
@@ -333,7 +323,7 @@ async fn login_user(
                 .cookie(
                     Cookie::build("access_token", &access_token)
                         // .domain(env::var("APP_DOMAIN").unwrap_or("localhost:8080".to_string()))
-                        .path("/auth")
+                        .path("/")
                         .secure(true)
                         .same_site(SameSite::Strict)
                         .max_age(time::Duration::minutes(30))
@@ -342,7 +332,7 @@ async fn login_user(
                 .cookie(
                     Cookie::build("refresh_token", &refresh_token)
                         // .domain(env::var("APP_DOMAIN").unwrap_or("localhost:8080".to_string()))
-                        .path("/auth")
+                        .path("/")
                         .secure(true)
                         .same_site(SameSite::Strict)
                         .max_age(time::Duration::minutes(60))
@@ -410,15 +400,18 @@ async fn refresh_access_token(req: HttpRequest, pool: web::Data<PgPool>) -> impl
 
     let client_uuid = Uuid::parse_str(&client_id).unwrap();
 
-    let access_token_details =
-        match generate_jwt_token(user.id, client_uuid, "read,write".to_string(), 30) {
-            Ok(token_details) => token_details,
-            Err(e) => {
-                return HttpResponse::BadGateway().json(
-                    serde_json::json!({"status": "fail", "message": format_args!("{:?}", e)}),
-                );
-            }
-        };
+    let access_token_details = match generate_jwt_token(
+        user.id,
+        client_uuid,
+        "world:read,world:write,backup:read,backup:write,user:read".to_string(),
+        30,
+    ) {
+        Ok(token_details) => token_details,
+        Err(e) => {
+            return HttpResponse::BadGateway()
+                .json(serde_json::json!({"status": "fail", "message": format_args!("{:?}", e)}));
+        }
+    };
 
     let new_refresh_token = generate_token(64);
 
@@ -428,7 +421,7 @@ async fn refresh_access_token(req: HttpRequest, pool: web::Data<PgPool>) -> impl
         client_uuid,
         user.id,
         chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30),
-        "read,write"
+        "world:read,world:write,backup:read,backup:write,user:read"
     )
     .execute(pool.as_ref())
     .await
@@ -446,7 +439,7 @@ async fn refresh_access_token(req: HttpRequest, pool: web::Data<PgPool>) -> impl
         client_uuid,
         user.id,
         chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60),
-        "read,write"
+        "world:read,world:write,backup:read,backup:write,user:read"
     )
     .execute(pool.as_ref())
     .await
@@ -551,125 +544,9 @@ async fn create_new_client(
     HttpResponse::Ok().json(serde_json::json!(oauth_client))
 }
 
-#[get("/login")]
-async fn get_login_page(
-    tmpl: web::Data<tera::Tera>,
-    query: web::Query<LoginQuery>,
-) -> Result<HttpResponse, Error> {
-    let mut ctx = tera::Context::new();
-    match query.redirect_uri.to_owned() {
-        Some(redirect_uri) => {
-            let params = &[("redirect_uri", redirect_uri)];
-
-            ctx.insert(
-                "login_url",
-                &format!(
-                    "/auth/login?{}",
-                    serde_urlencoded::to_string(params).unwrap()
-                ),
-            )
-        }
-        None => ctx.insert("login_url", "/auth/login"),
-    }
-    let rendered_html = tmpl
-        .render("login.html", &ctx)
-        .map_err(|_| actix_web::error::ErrorInternalServerError("Template error"))?;
-
-    Ok(HttpResponse::Ok()
-        .content_type("text/html")
-        .body(rendered_html))
-}
-
-#[get("/register")]
-async fn get_register_page(tmpl: web::Data<tera::Tera>) -> Result<HttpResponse, Error> {
-    let ctx = tera::Context::new();
-    let rendered_html = tmpl
-        .render("register.html", &ctx)
-        .map_err(|_| actix_web::error::ErrorInternalServerError("Template error"))?;
-
-    Ok(HttpResponse::Ok()
-        .content_type("text/html")
-        .body(rendered_html))
-}
-
-#[get("/authorize")]
-async fn get_authorization_page(
-    tmpl: web::Data<tera::Tera>,
-    pool: web::Data<PgPool>,
-    query: web::Query<AuthorizeQuery>,
-    req: HttpRequest,
-) -> Result<HttpResponse, Error> {
-    let mut ctx = tera::Context::new();
-
-    let info = query.into_inner();
-
-    match check_for_user(&pool, req).await {
-        Ok(_) => {}
-        Err(_) => {
-            let params = &[(
-                "redirect_uri",
-                &format!(
-                    "/auth/authorize?{}",
-                    serde_urlencoded::to_string(&info).unwrap()
-                ),
-            )];
-
-            let redirect_uri = format!(
-                "/auth/login?{}",
-                serde_urlencoded::to_string(params).unwrap()
-            );
-
-            ctx.insert("login_url", &redirect_uri);
-
-            let rendered_html = tmpl
-                .render("login.html", &ctx)
-                .map_err(|_| actix_web::error::ErrorInternalServerError("Template error"))?;
-
-            return Ok(HttpResponse::Ok()
-                .content_type("text/html")
-                .body(rendered_html));
-
-            // return Ok(HttpResponse::SeeOther()
-            //     .append_header(("Location", redirect_uri))
-            //     .finish()
-            // )
-        }
-    };
-
-    let client_uuid = Uuid::parse_str(&info.client_id).unwrap();
-
-    let client = sqlx::query!(
-        "SELECT name,scope FROM oauth_clients WHERE client_id = $1",
-        client_uuid
-    )
-    .fetch_one(pool.as_ref())
-    .await
-    .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
-
-    ctx.insert("app_name", &client.name);
-    ctx.insert("client_id", &info.client_id);
-    ctx.insert(
-        "scopes",
-        &serde_json::json!(&client
-            .scope
-            .unwrap_or("read,write".to_string())
-            .split(',')
-            .map(|s| s.to_string())
-            .collect::<Vec<String>>()),
-    );
-
-    let rendered_html = tmpl
-        .render("authorize.html", &ctx)
-        .map_err(|_| actix_web::error::ErrorInternalServerError("Template error"))?;
-
-    Ok(HttpResponse::Ok()
-        .content_type("text/html")
-        .body(rendered_html))
-}
-
 #[post("/authorize")]
 async fn get_authorization_token(
-    authization_info: web::Form<AcceptedAuthorization>,
+    authorization_info: web::Form<AcceptedAuthorization>,
     pool: web::Data<PgPool>,
     req: HttpRequest,
 ) -> impl Responder {
@@ -681,9 +558,9 @@ async fn get_authorization_token(
         }
     };
 
-    let authization_info = authization_info.into_inner();
+    let authorization_info = authorization_info.into_inner();
 
-    let client_uuid = Uuid::parse_str(&authization_info.client_id).unwrap();
+    let client_uuid = Uuid::parse_str(&authorization_info.client_id).unwrap();
 
     let client = match sqlx::query_as!(
         OAuthClient,
@@ -709,7 +586,7 @@ async fn get_authorization_token(
         client.redirect_uri,
         user.id,
         chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30),
-        authization_info.scopes
+        authorization_info.scopes
     )
     .execute(pool.as_ref())
     .await {
@@ -993,20 +870,94 @@ async fn revoke_token(
     HttpResponse::Ok().finish()
 }
 
-pub fn auth_config(cfg: &mut web::ServiceConfig) {
-    cfg.service(
-        web::scope("auth")
-            .service(get_authorization_page)
-            .service(register_user)
-            .service(get_register_page)
-            .service(login_user)
-            .service(get_login_page)
-            .service(refresh_access_token)
-            .service(get_me_handler)
-            .service(create_new_client)
-            .service(get_authorization_token)
-            .service(get_access_tokens)
-            .service(revoke_token)
-            .service(update_current_user_password),
+#[post("/authorize/create-client")]
+async fn create_client_authorization_token(
+    authorization_info: web::Form<AcceptedCreateClientAuthorization>,
+    pool: web::Data<PgPool>,
+    req: HttpRequest,
+) -> impl Responder {
+    let user = match check_for_user(&pool, req).await {
+        Ok(info) => info.user,
+        Err(e) => {
+            return HttpResponse::UnprocessableEntity()
+                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+        }
+    };
+
+    let info = authorization_info.into_inner();
+
+    let client_uuid = Uuid::new_v4();
+
+    let client = match sqlx::query_as!(
+        OAuthClient,
+        "INSERT INTO oauth_clients (client_id,client_secret,name,redirect_uri,grant_types,scope,user_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *",
+        client_uuid,
+        generate_token(64),
+        info.client_name.clone(),
+        info.redirect_uri.clone(),
+        info.grant_types.clone(),
+        info.scopes.clone(),
+        user.id
+    )
+    .fetch_one(pool.as_ref())
+    .await
+    {
+        Ok(client) => client,
+        Err(e) => {
+            return HttpResponse::UnprocessableEntity()
+                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+        }
+    };
+
+    let authorization_code = generate_token(64);
+
+    match sqlx::query!(
+        "INSERT INTO oauth_authorization_codes (code,client_id,redirect_uri,user_id,expires,scope) VALUES ($1,$2,$3,$4,$5,$6)",
+        authorization_code,
+        client.client_id,
+        client.redirect_uri,
+        user.id,
+        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30),
+        info.scopes
+    )
+    .execute(pool.as_ref())
+    .await {
+        Ok(_) => {},
+        Err(e) => {
+            return HttpResponse::UnprocessableEntity()
+                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+        }
+    }
+
+    let query = &[
+        ("code", authorization_code),
+        ("client_id", client.client_id.to_string()),
+        ("client_secret", client.client_secret),
+        ("state", info.state.unwrap_or("".to_string())),
+    ];
+
+    let redirection_response = format!(
+        "{}?{}",
+        client.redirect_uri.unwrap(),
+        serde_urlencoded::to_string(query).unwrap()
     );
+
+    HttpResponse::Found()
+        .append_header(("Location", redirection_response))
+        .finish()
+}
+
+#[get("/handshake")]
+pub async fn init_handshake(settings: web::Data<Settings>) -> impl Responder {
+    HttpResponse::Ok()
+        .json(serde_json::json!({
+            "authorization_endpoint": format!("{}/auth/authorize", settings.application.base_url),
+            "token_endpoint": format!("{}/auth/token", settings.application.base_url),
+            "client_creation_endpoint": format!("{}/auth/authorize/create-client", settings.application.base_url),
+            "scopes_supported": ["world:read", "world:write", "backup:read", "backup:write", "user:read", "create-client"],
+            "grant_types_supported": ["authorization_code", "client_credentials"],
+            "response_types_supported": ["code", "token"],
+            "access_token_lifetime": settings.application.access_token_lifetime,
+            "refresh_token_lifetime": settings.application.refresh_token_lifetime
+        }))
 }

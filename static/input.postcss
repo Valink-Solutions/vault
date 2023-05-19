@@ -11,6 +11,11 @@ html, body {
   border-color: black;
   box-shadow: 5px 5px 0px 0px rgba(0, 0, 0, 1);
   font-weight: 800;
+  fill: black;
+}
+
+[data-theme="neubrutalism"] .btn-circle {
+  box-shadow: 5px 5px 0px 0px rgba(0, 0, 0, 1);
 }
 
 [data-theme="neubrutalism"] .btn:hover {
@@ -22,7 +27,7 @@ html, body {
 [data-theme="neubrutalism"] .panel {
   border-width: 5px;
   border-color: black !important;
-  box-shadow: 10px 10px 0px 0px rgba(0, 0, 0, 1);
+  box-shadow: 5px 5px 0px 0px rgba(0, 0, 0, 1);
 }
 
 [data-theme="neubrutalism"] .input,
@@ -76,4 +81,66 @@ html, body {
   background-color: black !important;
   border: none;
   outline: none !important;
+}
+
+[data-theme="neubrutalism"] .dropdown-content {
+  border-width: 5px;
+  border-color: black !important;
+  background-color: white;
+  outline: none !important;
+  box-shadow: 5px 5px 0px 0px rgba(0,0,0,1);
+  gap: 0.25rem;
+}
+
+[data-theme="neubrutalism"] .dropdown-danger {
+  @apply hover:bg-error hover:text-error-content;
+}
+
+[data-theme="neubrutalism"] .badge {
+  border-width: 5px;
+  border-color: black !important;
+  box-shadow: 3px 3px 0px 0px rgba(0,0,0,1);
+  padding: 9px 8px;
+}
+
+[data-theme="neubrutalism"] .progress {
+  height: 2rem;
+  border: 5px solid black;
+  background-color: white !important;
+  box-shadow: 3px 3px 0px 0px rgba(0,0,0,1);
+  border-radius: 0.2rem !important;
+  box-sizing: border-box;
+}
+
+[data-theme="neubrutalism"] .progress__value {
+  background-color: white !important;
+  border-radius: 0rem  !important;
+  outline: none !important;
+  border: none !important;
+  box-sizing: border-box;
+}
+
+[data-theme="neubrutalism"] .pagination {
+  height: fit-content;
+  display: flex;
+  flex-direction: row;
+  width: fit-content;
+  border-width: 5px;
+  border-radius: 0.2rem;
+  border-color: black !important;
+  box-shadow: 5px 5px 0px 0px rgba(0, 0, 0, 1);
+}
+
+[data-theme="neubrutalism"] .pagination .btn {
+  height: 3rem;
+  border: none;
+  border-radius: 0rem;
+  box-shadow: none;
+}
+
+[data-theme="neubrutalism"] .pagination .btn-disabled,
+[data-theme="neubrutalism"] .pagination .btn-disabled:hover,
+[data-theme="neubrutalism"] .pagination .btn[disabled],
+[data-theme="neubrutalism"] .pagination .btn[disabled]:hover {
+    fill: #3ba265;
 }

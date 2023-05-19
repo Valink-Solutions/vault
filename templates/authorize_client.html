@@ -11,7 +11,7 @@
                 <h3 class="mx-auto">Authorize</h3>
                 <h2 class="card-title mx-auto text-center">"{{app_name}}"</h2>
                 <h3 class="mx-auto text-center">for the following permissions</h3>
-                <form id="authorizeForm" action="/auth/authorize" method="post" class="form-control gap-4 mt-4">
+                <form id="authorizeForm" action="/auth/authorize/create-client" method="post" class="form-control gap-4 mt-4">
                     {% for scope in scopes %}
                         <label class="label cursor-pointer">
                             <span class="label-text capitalize">{{scope | replace(from=":", to=" ")}}</span> 
@@ -19,7 +19,10 @@
                         </label>
                     {% endfor %}
                     <input type="hidden" id="scopes" name="scopes" />
-                    <input type="hidden" id="client_id" name="client_id" value="{{client_id}}" />
+                    <input type="hidden" id="client_name" name="client_name" value="{{app_name}}" />
+                    <input type="hidden" id="redirect_uri" name="redirect_uri" value="{{redirect_uri}}" />
+                    <input type="hidden" id="grant_types" name="grant_types" value="{{grant_types}}" />
+                    <input type="hidden" id="state" name="state" value="{{state}}" />
                     <button type="submit" class="btn btn-primary">Authorize</button>
                     <a href="/auth/login" class="btn btn-secondary">Cancel</a>
                 </form>
