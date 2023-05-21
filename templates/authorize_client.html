@@ -22,7 +22,9 @@
                     <input type="hidden" id="client_name" name="client_name" value="{{app_name}}" />
                     <input type="hidden" id="redirect_uri" name="redirect_uri" value="{{redirect_uri}}" />
                     <input type="hidden" id="grant_types" name="grant_types" value="{{grant_types}}" />
+                    {% if state %}
                     <input type="hidden" id="state" name="state" value="{{state}}" />
+                    {% endif %}
                     <button type="submit" class="btn btn-primary">Authorize</button>
                     <a href="/auth/login" class="btn btn-secondary">Cancel</a>
                 </form>

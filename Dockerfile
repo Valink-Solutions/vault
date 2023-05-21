@@ -37,6 +37,8 @@ RUN apt-get update -y \
 COPY --from=builder /app/target/release/vault vault
 
 COPY configuration configuration
+COPY static static
+COPY templates templates
 
 ENV APP_ENVIRONMENT production
 

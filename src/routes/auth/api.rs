@@ -8,6 +8,7 @@ use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
+use secrecy::ExposeSecret;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -189,6 +190,7 @@ async fn login_user(
     body: web::Either<web::Json<LoginUserSchema>, web::Form<LoginUserSchema>>,
     pool: web::Data<PgPool>,
     query: web::Query<LoginQuery>,
+    settings: web::Data<Settings>,
 ) -> impl Responder {
     let LoginUserSchema { email, password } = match body {
         web::Either::Left(json) => json.into_inner(),
@@ -224,7 +226,7 @@ async fn login_user(
     }
 
     // let access_token = generate_token(64);
-    let client_id = env::var("CLIENT_ID").expect("FIRST_PARTY_CLIENT_ID is not set");
+    let client_id = settings.admin.client_id.clone();
 
     let client_uuid = Uuid::parse_str(&client_id).unwrap();
 
@@ -244,15 +246,20 @@ async fn login_user(
         }
     };
 
-    let access_token_details =
-        match generate_jwt_token(user.id, client_uuid, client_scope.clone(), 30) {
-            Ok(token_details) => token_details,
-            Err(e) => {
-                return HttpResponse::BadGateway().json(
-                    serde_json::json!({"status": "fail", "message": format_args!("{:?}", e)}),
-                );
-            }
-        };
+    let access_token_details = match generate_jwt_token(
+        user.id,
+        client_uuid,
+        client_scope.clone(),
+        30,
+        settings.application.private_key.expose_secret().clone(),
+        settings.application.base_url.clone(),
+    ) {
+        Ok(token_details) => token_details,
+        Err(e) => {
+            return HttpResponse::BadGateway()
+                .json(serde_json::json!({"status": "fail", "message": format_args!("{:?}", e)}));
+        }
+    };
 
     let refresh_token = generate_token(64);
 
@@ -344,7 +351,11 @@ async fn login_user(
 }
 
 #[get("/refresh")]
-async fn refresh_access_token(req: HttpRequest, pool: web::Data<PgPool>) -> impl Responder {
+async fn refresh_access_token(
+    req: HttpRequest,
+    pool: web::Data<PgPool>,
+    settings: web::Data<Settings>,
+) -> impl Responder {
     let message = "could not refresh access token";
 
     let refresh_token = match req.headers().get("Authorization") {
@@ -405,6 +416,8 @@ async fn refresh_access_token(req: HttpRequest, pool: web::Data<PgPool>) -> impl
         client_uuid,
         "world:read,world:write,backup:read,backup:write,user:read".to_string(),
         30,
+        settings.application.private_key.expose_secret().clone(),
+        settings.application.base_url.clone(),
     ) {
         Ok(token_details) => token_details,
         Err(e) => {
@@ -597,13 +610,26 @@ async fn get_authorization_token(
         }
     }
 
-    let query = &[("code", authorization_code)];
+    let redirection_response = if authorization_info.state.is_some() {
+        let query = &[
+            ("code", authorization_code),
+            ("state", authorization_info.state.unwrap_or("".to_string())),
+        ];
 
-    let redirection_response = format!(
-        "{}?{}",
-        client.redirect_uri.unwrap(),
-        serde_urlencoded::to_string(query).unwrap()
-    );
+        format!(
+            "{}?{}",
+            authorization_info.redirect_uri,
+            serde_urlencoded::to_string(query).unwrap()
+        )
+    } else {
+        let query = &[("code", authorization_code)];
+
+        format!(
+            "{}?{}",
+            authorization_info.redirect_uri,
+            serde_urlencoded::to_string(query).unwrap()
+        )
+    };
 
     HttpResponse::Found()
         .append_header(("Location", redirection_response))
@@ -614,6 +640,7 @@ async fn get_authorization_token(
 async fn get_access_tokens(
     query: web::Query<TradeTokenQuery>,
     pool: web::Data<PgPool>,
+    settings: web::Data<Settings>,
 ) -> impl Responder {
     let info = query.into_inner();
 
@@ -678,6 +705,8 @@ async fn get_access_tokens(
         client_id,
         auth_code.scope.clone().unwrap(),
         30,
+        settings.application.private_key.expose_secret().clone(),
+        settings.application.base_url.clone(),
     ) {
         Ok(token_details) => token_details,
         Err(e) => {
@@ -756,13 +785,17 @@ async fn revoke_token(
     pool: web::Data<PgPool>,
     query: web::Query<RevokeTokenQuery>,
     _auth_guard: AuthMiddleware,
+    settings: web::Data<Settings>,
 ) -> impl Responder {
     let info = query.into_inner();
 
     match info.token_type_hint {
         Some(type_hint) => {
             if type_hint == "access_token".to_string() {
-                let access_token_details = match verify_jwt_token(&info.token) {
+                let access_token_details = match verify_jwt_token(
+                    &info.token,
+                    settings.application.public_key.expose_secret().clone(),
+                ) {
                     Ok(token_details) => token_details,
                     Err(_) => {
                         return HttpResponse::BadRequest().json(serde_json::json!({
@@ -840,7 +873,10 @@ async fn revoke_token(
                 }
             }
 
-            let access_token_details = match verify_jwt_token(&info.token) {
+            let access_token_details = match verify_jwt_token(
+                &info.token,
+                settings.application.public_key.expose_secret().clone(),
+            ) {
                 Ok(token_details) => token_details,
                 Err(_) => return HttpResponse::Ok().finish(),
             };

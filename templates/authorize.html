@@ -20,6 +20,10 @@
                     {% endfor %}
                     <input type="hidden" id="scopes" name="scopes" />
                     <input type="hidden" id="client_id" name="client_id" value="{{client_id}}" />
+                    <input type="hidden" id="redirect_uri" name="redirect_uri" value="{{redirect_uri}}" />
+                    {% if state %}
+                    <input type="hidden" id="state" name="state" value="{{state}}" />
+                    {% endif %}
                     <button type="submit" class="btn btn-primary">Authorize</button>
                     <a href="/auth/login" class="btn btn-secondary">Cancel</a>
                 </form>

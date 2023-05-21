@@ -1,3 +1,4 @@
+use actix_cors::Cors;
 use actix_web::{middleware::Logger, web, App, HttpServer};
 use env_logger::Env;
 use log::info;
@@ -5,7 +6,7 @@ use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use std::time::Duration;
 use tera::Tera;
-use vault::auth::utils::create_vault_client_if_not_exists;
+use vault::auth::utils::create_vault_admin_if_not_exists;
 use vault::configuration::get_configuration;
 use vault::database::check_for_migrations;
 use vault::object::create_object_store;
@@ -39,7 +40,7 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("Error Creating database connection");
 
-    create_vault_client_if_not_exists(
+    create_vault_admin_if_not_exists(
         &pool.clone(),
         configuration.application.base_url.clone(),
         configuration.admin.clone(),
@@ -104,6 +105,12 @@ async fn main() -> std::io::Result<()> {
 
         App::new()
             .wrap(Logger::default())
+            .wrap(
+                Cors::default()
+                    .allow_any_origin()
+                    .supports_credentials()
+                    .max_age(3600),
+            )
             .configure(vault::routes::auth_config)
             .configure(vault::routes::dashboard_config)
             .configure(vault::routes::worlds_config)

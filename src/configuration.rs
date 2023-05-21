@@ -16,8 +16,8 @@ pub struct ApplicationSettings {
     pub port: u16,
     pub host: String,
     pub base_url: String,
-    pub private_key: String,
-    pub public_key: String,
+    pub private_key: Secret<String>,
+    pub public_key: Secret<String>,
     #[serde(deserialize_with = "deserialize_number_from_string")]
     pub access_token_lifetime: u32,
     #[serde(deserialize_with = "deserialize_number_from_string")]
@@ -41,6 +41,7 @@ pub struct AdminSettings {
 pub struct StorageSettings {
     pub driver: String,
     pub path: Option<String>,
+    pub endpoint: Option<String>,
     pub region: Option<String>,
     pub bucket_name: Option<String>,
     pub access_key_id: Option<String>,

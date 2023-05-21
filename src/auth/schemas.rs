@@ -46,7 +46,9 @@ pub struct AuthorizeCreateClientQuery {
 #[derive(Debug, Deserialize)]
 pub struct AcceptedAuthorization {
     pub client_id: String,
+    pub redirect_uri: String,
     pub scopes: String,
+    pub state: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]

@@ -1,7 +1,5 @@
 use super::schemas::{TokenClaims, TokenDetails};
-use std::env;
-use std::fs::File;
-use std::io::Read;
+use base64::{engine::general_purpose, Engine as _};
 use uuid::Uuid;
 
 use rand::Rng;
@@ -12,8 +10,10 @@ pub fn generate_jwt_token(
     client_id: uuid::Uuid,
     scope: String,
     ttl: i64,
+    private_key: String,
+    base_url: String,
 ) -> Result<TokenDetails, jsonwebtoken::errors::Error> {
-    let pem_path = env::var("PRIVATE_KEY_PATH").expect("PRIVATE_KEY_PATH not set");
+    let bytes_private_key = general_purpose::STANDARD.decode(private_key).unwrap();
 
     let now = chrono::Utc::now();
     let mut token_details = TokenDetails {
@@ -27,19 +27,19 @@ pub fn generate_jwt_token(
     let claims = TokenClaims {
         sub: token_details.user_id.to_string(),
         token_uuid: token_details.token_uuid.to_string(),
-        iss: env::var("APP_DOMAIN").expect("APP_DOMAIN is not set"),
-        aud: env::var("APP_DOMAIN").expect("APP_DOMAIN is not set"),
+        iss: base_url.clone(),
+        aud: base_url.clone(),
         exp: token_details.expires_in.unwrap(),
         iat: now.timestamp(),
         scope: scope,
         client_id: client_id.to_string(),
     };
 
-    let mut pem_file = File::open(pem_path).expect("Unable to open .pem file");
-    let mut pem_data = Vec::new();
-    pem_file
-        .read_to_end(&mut pem_data)
-        .expect("Unable to read .pem file");
+    // let mut pem_file = File::open(pem_path).expect("Unable to open .pem file");
+    // let mut pem_data = Vec::new();
+    // pem_file
+    //     .read_to_end(&mut pem_data)
+    //     .expect("Unable to read .pem file");
 
     // let pem: Pem = parse(pem_data).expect("Unable to parse .pem file");
 
@@ -47,20 +47,23 @@ pub fn generate_jwt_token(
     let token = jsonwebtoken::encode(
         &header,
         &claims,
-        &jsonwebtoken::EncodingKey::from_rsa_pem(&pem_data)?,
+        &jsonwebtoken::EncodingKey::from_rsa_pem(&bytes_private_key)?,
     )?;
     token_details.token = Some(token);
     Ok(token_details)
 }
 
-pub fn verify_jwt_token(token: &str) -> Result<TokenDetails, jsonwebtoken::errors::Error> {
-    let pem_path = env::var("PUBLIC_KEY_PATH").expect("PUBLIC_KEY_PATH not set");
+pub fn verify_jwt_token(
+    token: &str,
+    public_key: String,
+) -> Result<TokenDetails, jsonwebtoken::errors::Error> {
+    let bytes_public_key = general_purpose::STANDARD.decode(public_key).unwrap();
 
-    let mut pem_file = File::open(pem_path).expect("Unable to open .pem file");
-    let mut pem_data = Vec::new();
-    pem_file
-        .read_to_end(&mut pem_data)
-        .expect("Unable to read .pem file");
+    // let mut pem_file = File::open(pem_path).expect("Unable to open .pem file");
+    // let mut pem_data = Vec::new();
+    // pem_file
+    //     .read_to_end(&mut pem_data)
+    //     .expect("Unable to read .pem file");
 
     // let pem = pem::parse(pem_data).expect("Unable to parse .pem file");
 
@@ -68,7 +71,7 @@ pub fn verify_jwt_token(token: &str) -> Result<TokenDetails, jsonwebtoken::error
 
     let decoded = jsonwebtoken::decode::<TokenClaims>(
         token,
-        &jsonwebtoken::DecodingKey::from_rsa_pem(&pem_data)?,
+        &jsonwebtoken::DecodingKey::from_rsa_pem(&bytes_public_key)?,
         &validation,
     )?;
 

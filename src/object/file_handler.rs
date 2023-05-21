@@ -11,6 +11,7 @@ pub fn create_object_store(settings: StorageSettings) -> Result<Box<dyn ObjectSt
             info!("Initializing s3 Compatible Storage Driver.");
 
             let s3 = AmazonS3Builder::new()
+                .with_endpoint(settings.endpoint.expect("AWS_ENDPOINT must be set"))
                 .with_region(settings.region.expect("AWS_REGION must be set"))
                 .with_bucket_name(settings.bucket_name.expect("S3_BUCKET_NAME must be set"))
                 .with_access_key_id(settings.access_key_id.expect("ACCESS_KEY_ID must be set"))

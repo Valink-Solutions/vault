@@ -5,9 +5,11 @@ use actix_web::error::{ErrorInternalServerError, ErrorUnauthorized};
 use actix_web::{dev::Payload, Error as ActixWebError};
 use actix_web::{web, FromRequest, HttpRequest};
 use futures::executor::block_on;
+use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
+use crate::configuration::Settings;
 use crate::database::models::User;
 
 use super::schemas::UserInfo;
@@ -36,6 +38,7 @@ impl FromRequest for AuthMiddleware {
     type Future = Ready<Result<Self, Self::Error>>;
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
         let pool: web::Data<PgPool> = req.app_data::<web::Data<PgPool>>().unwrap().clone();
+        let settings: web::Data<Settings> = req.app_data::<web::Data<Settings>>().unwrap().clone();
 
         let access_token = match req.headers().get("Authorization") {
             Some(header_value) => {
@@ -66,7 +69,10 @@ impl FromRequest for AuthMiddleware {
             }
         };
 
-        let access_token_details = match verify_jwt_token(&access_token) {
+        let access_token_details = match verify_jwt_token(
+            &access_token,
+            settings.application.public_key.expose_secret().clone(),
+        ) {
             Ok(token_details) => token_details,
             Err(e) => {
                 let json_error = ErrorResponse {
@@ -161,7 +167,12 @@ pub async fn check_for_user(
         }
     };
 
-    let access_token_details = match verify_jwt_token(&access_token) {
+    let settings: web::Data<Settings> = req.app_data::<web::Data<Settings>>().unwrap().clone();
+
+    let access_token_details = match verify_jwt_token(
+        &access_token,
+        settings.application.public_key.expose_secret().clone(),
+    ) {
         Ok(token_details) => token_details,
         Err(e) => {
             let json_error = ErrorResponse {

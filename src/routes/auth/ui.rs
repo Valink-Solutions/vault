@@ -57,7 +57,7 @@ async fn get_authorization_page(
 ) -> Result<HttpResponse, Error> {
     let mut ctx = tera::Context::new();
 
-    let info = query.into_inner();
+    let query_info = query.into_inner();
 
     match check_for_user(&pool, req).await {
         Ok(_) => {}
@@ -66,7 +66,7 @@ async fn get_authorization_page(
                 "redirect_uri",
                 &format!(
                     "/auth/authorize?{}",
-                    serde_urlencoded::to_string(&info).unwrap()
+                    serde_urlencoded::to_string(&query_info).unwrap()
                 ),
             )];
 
@@ -92,7 +92,7 @@ async fn get_authorization_page(
         }
     };
 
-    let client_uuid = Uuid::parse_str(&info.client_id).unwrap();
+    let client_uuid = Uuid::parse_str(&query_info.client_id).unwrap();
 
     let client = sqlx::query!(
         "SELECT name,scope FROM oauth_clients WHERE client_id = $1",
@@ -103,7 +103,7 @@ async fn get_authorization_page(
     .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
 
     ctx.insert("app_name", &client.name);
-    ctx.insert("client_id", &info.client_id);
+    ctx.insert("client_id", &query_info.client_id);
     ctx.insert(
         "scopes",
         &serde_json::json!(&client
@@ -113,6 +113,12 @@ async fn get_authorization_page(
             .map(|s| s.to_string())
             .collect::<Vec<String>>()),
     );
+
+    if query_info.state.is_some() {
+        ctx.insert("state", &query_info.state.unwrap_or("".to_string()));
+    };
+
+    ctx.insert("redirect_uri", &query_info.redirect_uri);
 
     let rendered_html = tmpl
         .render("authorize.html", &ctx)
