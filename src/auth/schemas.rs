@@ -90,12 +90,27 @@ pub struct TradeTokenQuery {
     pub grant_type: String,
     pub code: String,
     pub redirect_uri: String,
-    pub client_id: String,
-    pub client_secret: String,
+    pub client_id: Option<String>,
+    pub client_secret: Option<String>,
+    pub code_verifier: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct RevokeTokenQuery {
     pub token: String,
     pub token_type_hint: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum Expiry {
+    Thirty,
+    Sixty,
+    Ninety,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateApiKey {
+    pub name: String,
+    pub expiry: Expiry,
+    pub scopes: Vec<String>,
 }

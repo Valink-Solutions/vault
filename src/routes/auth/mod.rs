@@ -2,7 +2,7 @@ use actix_web::web;
 
 use self::{
     api::{
-        create_client_authorization_token, create_new_client, get_access_tokens,
+        create_api_key, create_client_authorization_token, create_new_client, get_access_tokens,
         get_authorization_token, get_me_handler, login_user, refresh_access_token, register_user,
         revoke_token, update_current_user_password,
     },
@@ -33,6 +33,7 @@ pub fn auth_config(cfg: &mut web::ServiceConfig) {
             .service(revoke_token)
             .service(update_current_user_password)
             .service(get_create_client_authorization_page)
-            .service(create_client_authorization_token),
+            .service(create_client_authorization_token)
+            .service(create_api_key),
     );
 }

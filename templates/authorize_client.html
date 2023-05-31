@@ -12,11 +12,14 @@
                 <h2 class="card-title mx-auto text-center">"{{app_name}}"</h2>
                 <h3 class="mx-auto text-center">for the following permissions</h3>
                 <form id="authorizeForm" action="/auth/authorize/create-client" method="post" class="form-control gap-4 mt-4">
-                    {% for scope in scopes %}
-                        <label class="label cursor-pointer">
-                            <span class="label-text capitalize">{{scope | replace(from=":", to=" ")}}</span> 
-                            <input id="{{scope}}" name="{{scope}}" type="checkbox" checked="checked" class="checkbox" />
-                        </label>
+                    {% for key, value in scopes %}
+                        <div class="flex flex-col bg-base-200 bg-opacity-50 p-2 rounded-sm">
+                            <label class="label cursor-pointer pb-1">
+                                <span class="label-text capitalize leading-4">{{key | replace(from=":", to=" ")}}</span> 
+                                <input id="{{key}}" name="{{key}}" type="checkbox" checked="checked" class="checkbox" />
+                            </label>
+                            <span class="text-xs opacity-50 pl-1">{{ value }}</span>
+                        </div>
                     {% endfor %}
                     <input type="hidden" id="scopes" name="scopes" />
                     <input type="hidden" id="client_name" name="client_name" value="{{app_name}}" />
@@ -51,7 +54,7 @@
 
         const all_scopes = [];
 
-        scopesData.forEach(scope => {
+        Object.keys(scopesData).forEach(scope => {
             checkAndPushScope(scope, all_scopes);
         });
 

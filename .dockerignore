@@ -1,0 +1,8 @@
+# flyctl launch added from .gitignore
+target
+**/**/**/*.db
+**/.env
+**/*.pem
+testing_data
+node_modules
+**/fly.toml

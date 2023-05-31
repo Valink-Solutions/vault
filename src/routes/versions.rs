@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::{
     auth::middleware::AuthMiddleware,
     database::models::{CreateWorldVersionSchema, UpdateWorldVersionSchema, World, WorldVersion},
-    utilities::WorldVersionPath,
+    utilities::{PageQuery, WorldVersionPath},
 };
 
 #[post("/{world_id}/versions")]
@@ -161,9 +161,10 @@ pub async fn create_new_world_version(
     }
 }
 
-#[get("/{world_id}/versions/{version_id}")]
+#[get("/{world_id}/versions")]
 pub async fn get_world_versions_by_uuid(
-    path_info: web::Path<WorldVersionPath>,
+    world_id: web::Path<String>,
+    query: web::Query<PageQuery>,
     pool: web::Data<PgPool>,
     auth_guard: AuthMiddleware,
 ) -> impl Responder {
@@ -174,8 +175,7 @@ pub async fn get_world_versions_by_uuid(
         }));
     };
 
-    let world_id = path_info.world_id.to_string();
-    let version_id = path_info.version_id.to_string();
+    let world_id = world_id.into_inner();
 
     let world_uuid = match Uuid::parse_str(&world_id) {
         Ok(uuid) => uuid,
@@ -185,20 +185,12 @@ pub async fn get_world_versions_by_uuid(
         }
     };
 
-    let version_uuid = match Uuid::parse_str(&version_id) {
-        Ok(uuid) => uuid,
-        Err(e) => {
-            return HttpResponse::BadRequest()
-                .json(serde_json::json!({"status": "fail", "message": format_args!("{}", e)}));
-        }
-    };
-
-    let query_result = sqlx::query_as!(World, "SELECT * FROM worlds WHERE id = $1", world_uuid)
+    let world_result = sqlx::query_as!(World, "SELECT * FROM worlds WHERE id = $1", world_uuid)
         .fetch_optional(pool.as_ref())
         .await
         .unwrap();
 
-    let world = match query_result {
+    let world = match world_result {
         Some(world) => world,
         None => {
             return HttpResponse::BadRequest()
@@ -213,23 +205,30 @@ pub async fn get_world_versions_by_uuid(
         }
     }
 
-    let version_result = sqlx::query_as!(
+    let limit = query.limit.unwrap_or(100);
+    let offset = query.offset.unwrap_or(0);
+
+    let versions_result: Result<Vec<WorldVersion>, sqlx::Error> = sqlx::query_as!(
         WorldVersion,
         r#"
         SELECT *
         FROM world_versions
-        WHERE id = $1
+        WHERE world_id = $1
+        LIMIT $2
+        OFFSET $3
     "#,
-        version_uuid
+        world_uuid,
+        limit,
+        offset
     )
-    .fetch_one(pool.as_ref())
+    .fetch_all(pool.as_ref())
     .await;
 
-    match version_result {
-        Ok(version) => {
+    match versions_result {
+        Ok(versions) => {
             let world_response = serde_json::json!({"status": "success","data": serde_json::json!({
                 "world": world,
-                "version": version
+                "versions": versions
             })});
 
             return HttpResponse::Ok().json(world_response);

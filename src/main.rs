@@ -10,6 +10,7 @@ use vault::auth::utils::create_vault_admin_if_not_exists;
 use vault::configuration::get_configuration;
 use vault::database::check_for_migrations;
 use vault::object::create_object_store;
+use vault::scopes::Scopes;
 use vault::tasks::{
     delete_old_access_tokens, delete_old_authorization_codes, delete_old_refresh_tokens,
     delete_queued_worlds, TaskRunner,
@@ -40,10 +41,13 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("Error Creating database connection");
 
+    let scopes = Scopes::new();
+
     create_vault_admin_if_not_exists(
         &pool.clone(),
         configuration.application.base_url.clone(),
         configuration.admin.clone(),
+        scopes.clone(),
     )
     .await
     .expect("An error occurred while running migrations.");
@@ -119,6 +123,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(object_store.clone()))
             .app_data(web::Data::new(tera.clone()))
             .app_data(web::Data::new(configuration.clone()))
+            .app_data(web::Data::new(scopes.clone()))
             .service(actix_files::Files::new("/static", "./static").show_files_listing())
             .service(vault::routes::init_handshake)
     })

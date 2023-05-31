@@ -8,24 +8,27 @@ use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
+use base64::{engine::general_purpose, Engine as _};
 use secrecy::ExposeSecret;
 use sqlx::{PgPool, Row};
+use url::Url;
 use uuid::Uuid;
 
 use crate::{
     auth::{
         middleware::{check_for_user, AuthMiddleware},
         schemas::{
-            AcceptedAuthorization, AcceptedCreateClientAuthorization, CreateClientRequest,
-            LoginQuery, RevokeTokenQuery, TradeTokenQuery, UpdatePassword,
+            AcceptedAuthorization, AcceptedCreateClientAuthorization, CreateApiKey,
+            CreateClientRequest, LoginQuery, RevokeTokenQuery, TradeTokenQuery, UpdatePassword,
         },
         token::{generate_jwt_token, generate_token, verify_jwt_token},
         utils::filter_user_record,
     },
     configuration::Settings,
     database::models::{
-        LoginUserSchema, OAuthAuthorizationToken, OAuthClient, RegisterUserSchema, User,
+        ApiKey, LoginUserSchema, OAuthAuthorizationToken, OAuthClient, RegisterUserSchema, User,
     },
+    scopes::Scopes,
 };
 
 #[post("/register")]
@@ -638,145 +641,224 @@ async fn get_authorization_token(
 
 #[post("/token")]
 async fn get_access_tokens(
-    query: web::Query<TradeTokenQuery>,
+    query: web::Either<web::Json<TradeTokenQuery>, web::Query<TradeTokenQuery>>,
     pool: web::Data<PgPool>,
     settings: web::Data<Settings>,
+    req: HttpRequest,
 ) -> impl Responder {
-    let info = query.into_inner();
-
-    let client_id = Uuid::parse_str(&info.client_id).unwrap();
-
-    let client = match sqlx::query_as!(
-        OAuthClient,
-        "SELECT * FROM oauth_clients WHERE client_id = $1",
-        client_id
-    )
-    .fetch_one(pool.as_ref())
-    .await
-    {
-        Ok(client) => client,
-        Err(_) => {
-            return HttpResponse::UnprocessableEntity()
-                .json(serde_json::json!({"status": "error", "message": "Invalid client id"}));
-        }
+    let info = match query {
+        web::Either::Left(data) => data.into_inner(),
+        web::Either::Right(data) => data.into_inner(),
     };
 
-    let auth_code = match sqlx::query_as!(
-        OAuthAuthorizationToken,
-        "SELECT * FROM oauth_authorization_codes WHERE code = $1",
-        info.code
-    )
-    .fetch_one(pool.as_ref())
-    .await
-    {
-        Ok(auth_code) => auth_code,
-        Err(_) => {
+    let mut client_id = info.client_id;
+    let mut client_secret = info.client_secret;
+
+    if client_id.is_none() {
+        let auth_header = req.headers().get("Authorization");
+        if let Some(auth_header) = auth_header {
+            if let Ok(auth_header) = auth_header.to_str() {
+                if auth_header.starts_with("Basic ") {
+                    let encoded_credentials = &auth_header[6..];
+                    if let Ok(decoded_credentials) =
+                        general_purpose::STANDARD.decode(encoded_credentials)
+                    {
+                        let credentials = String::from_utf8_lossy(&decoded_credentials);
+                        if let Some(separator_index) = credentials.find(':') {
+                            client_id = Some(credentials[..separator_index].to_owned());
+                            client_secret = Some(credentials[(separator_index + 1)..].to_owned());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let (Some(client_id), Some(client_secret)) = (client_id, client_secret) {
+        let client_uuid = Uuid::parse_str(&client_id).unwrap();
+
+        let client = match sqlx::query_as!(
+            OAuthClient,
+            "SELECT * FROM oauth_clients WHERE client_id = $1",
+            client_uuid
+        )
+        .fetch_one(pool.as_ref())
+        .await
+        {
+            Ok(client) => client,
+            Err(_) => {
+                return HttpResponse::UnprocessableEntity()
+                    .json(serde_json::json!({"status": "error", "message": "Invalid client id"}));
+            }
+        };
+
+        let auth_code = match sqlx::query_as!(
+            OAuthAuthorizationToken,
+            "SELECT * FROM oauth_authorization_codes WHERE code = $1",
+            info.code
+        )
+        .fetch_one(pool.as_ref())
+        .await
+        {
+            Ok(auth_code) => auth_code,
+            Err(_) => {
+                return HttpResponse::UnprocessableEntity().json(
+                    serde_json::json!({"status": "error", "message": "Invalid authorization code"}),
+                );
+            }
+        };
+
+        if auth_code.client_id != client.client_id {
+            return HttpResponse::UnprocessableEntity()
+                .json(serde_json::json!({"status": "error", "message": "Client does not match authorization code"}));
+        }
+
+        if client_secret != client.client_secret {
             return HttpResponse::UnprocessableEntity().json(
-                serde_json::json!({"status": "error", "message": "Invalid authorization code"}),
+                serde_json::json!({"status": "error", "message": "Client secret is incorrect"}),
             );
         }
-    };
 
-    if auth_code.client_id != client.client_id {
-        return HttpResponse::UnprocessableEntity()
-            .json(serde_json::json!({"status": "error", "message": "Client does not match authorization code"}));
-    }
+        let info_url = Url::parse(&info.redirect_uri).expect("Failed to parse info.redirect_uri");
+        let auth_code_url = Url::parse(&auth_code.redirect_uri.unwrap())
+            .expect("Failed to parse auth_code.redirect_uri");
 
-    if info.client_secret != client.client_secret {
-        return HttpResponse::UnprocessableEntity()
-            .json(serde_json::json!({"status": "error", "message": "Client secret is incorrect"}));
-    }
-
-    if info.redirect_uri != auth_code.redirect_uri.unwrap() {
-        return HttpResponse::UnprocessableEntity()
-            .json(serde_json::json!({"status": "error", "message": "Redirect URI is unverified"}));
-    }
-
-    let mut transaction = match pool.begin().await {
-        Ok(transaction) => transaction,
-        Err(e) => {
-            return HttpResponse::InternalServerError()
-                .json(serde_json::json!({"status": "error","message": format_args!("{:?}", e)}));
+        if info_url.scheme() != auth_code_url.scheme()
+            || info_url.host_str() != auth_code_url.host_str()
+            || info_url.port() != auth_code_url.port()
+        {
+            return HttpResponse::UnprocessableEntity().json(
+                serde_json::json!({"status": "error", "message": "Redirect URI is unverified"}),
+            );
         }
-    };
 
-    let access_token_details = match generate_jwt_token(
-        auth_code.user_id,
-        client_id,
-        auth_code.scope.clone().unwrap(),
-        30,
-        settings.application.private_key.expose_secret().clone(),
-        settings.application.base_url.clone(),
-    ) {
-        Ok(token_details) => token_details,
-        Err(e) => {
-            return HttpResponse::BadGateway()
-                .json(serde_json::json!({"status": "fail", "message": format_args!("{:?}", e)}));
+        // if info.redirect_uri != auth_code.redirect_uri.unwrap() {
+        //     return HttpResponse::UnprocessableEntity()
+        //         .json(serde_json::json!({"status": "error", "message": "Redirect URI is unverified"}));
+        // }
+
+        let mut transaction = match pool.begin().await {
+            Ok(transaction) => transaction,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(
+                    serde_json::json!({"status": "error","message": format_args!("{:?}", e)}),
+                );
+            }
+        };
+
+        let access_token_details = match generate_jwt_token(
+            auth_code.user_id,
+            client_uuid,
+            auth_code.scope.clone().unwrap(),
+            30,
+            settings.application.private_key.expose_secret().clone(),
+            settings.application.base_url.clone(),
+        ) {
+            Ok(token_details) => token_details,
+            Err(e) => {
+                return HttpResponse::BadGateway().json(
+                    serde_json::json!({"status": "fail", "message": format_args!("{:?}", e)}),
+                );
+            }
+        };
+
+        let refresh_token = generate_token(64);
+
+        match sqlx::query!(
+            "INSERT INTO oauth_access_tokens (access_token,client_id,user_id,expires,scope) VALUES ($1, $2, $3, $4, $5)",
+            access_token_details.clone().token_uuid,
+            client_uuid,
+            auth_code.user_id,
+            chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30),
+            auth_code.scope.clone().unwrap()
+        )
+        .execute(&mut transaction)
+        .await
+        {
+            Ok(_) => {}
+            Err(e) => {
+                return HttpResponse::UnprocessableEntity()
+                    .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+            }
         }
-    };
 
-    let refresh_token = generate_token(64);
-
-    match sqlx::query!(
-        "INSERT INTO oauth_access_tokens (access_token,client_id,user_id,expires,scope) VALUES ($1, $2, $3, $4, $5)",
-        access_token_details.clone().token_uuid,
-        client_id,
-        auth_code.user_id,
-        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30),
-        auth_code.scope.clone().unwrap()
-    )
-    .execute(&mut transaction)
-    .await
-    {
-        Ok(_) => {}
-        Err(e) => {
-            return HttpResponse::UnprocessableEntity()
-                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+        match sqlx::query!(
+            "INSERT INTO oauth_refresh_tokens (refresh_token,client_id,user_id,expires,scope) VALUES ($1, $2, $3, $4, $5)",
+            refresh_token.clone(),
+            client_uuid,
+            auth_code.user_id,
+            chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60),
+            auth_code.scope.clone().unwrap()
+        )
+        .execute(&mut transaction)
+        .await
+        {
+            Ok(_) => {}
+            Err(e) => {
+                return HttpResponse::UnprocessableEntity()
+                    .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+            }
         }
-    }
 
-    match sqlx::query!(
-        "INSERT INTO oauth_refresh_tokens (refresh_token,client_id,user_id,expires,scope) VALUES ($1, $2, $3, $4, $5)",
-        refresh_token.clone(),
-        client_id,
-        auth_code.user_id,
-        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60),
-        auth_code.scope.unwrap()
-    )
-    .execute(&mut transaction)
-    .await
-    {
-        Ok(_) => {}
-        Err(e) => {
-            return HttpResponse::UnprocessableEntity()
-                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
-        }
-    }
+        match sqlx::query!(
+            "DELETE FROM oauth_authorization_codes WHERE code = $1",
+            auth_code.code
+        )
+        .execute(&mut transaction)
+        .await
+        {
+            Ok(_) => match transaction.commit().await {
+                Ok(_) => {
+                    let accept_header = req.headers().get("Accept");
 
-    match sqlx::query!(
-        "DELETE FROM oauth_authorization_codes WHERE code = $1",
-        auth_code.code
-    )
-    .execute(&mut transaction)
-    .await
-    {
-        Ok(_) => match transaction.commit().await {
-            Ok(_) => HttpResponse::Ok().json(serde_json::json!({
-                "status": "success",
-                "token_type": "Bearer",
-                "access_token": access_token_details.token.unwrap(),
-                "refresh_token": refresh_token,
-                "expires": (chrono::Utc::now() + chrono::Duration::minutes(30)).timestamp()
-            })),
+                    let time = (chrono::Utc::now() + chrono::Duration::minutes(30)).timestamp();
+
+                    match accept_header {
+                        Some(header) => {
+                            if header.to_str().unwrap() == "application/json".to_string() {
+                                HttpResponse::Ok().json(serde_json::json!({
+                                    "token_type": "Bearer",
+                                    "access_token": access_token_details.token.unwrap(),
+                                    "refresh_token": refresh_token,
+                                    "expires_in": time,
+                                    "scope": auth_code.scope.clone().unwrap()
+                                }))
+                            } else {
+                                HttpResponse::Ok().json(serde_json::json!({
+                                    "token_type": "Bearer",
+                                    "access_token": access_token_details.token.unwrap(),
+                                    "refresh_token": refresh_token,
+                                    "expires_in": time,
+                                    "scope": auth_code.scope.clone().unwrap()
+                                }))
+                            }
+                        }
+                        None => {
+                            let params = &[
+                                ("token_type", "Bearer"),
+                                ("access_token", &access_token_details.token.unwrap()),
+                                ("refresh_token", &refresh_token),
+                                ("expires_in", &time.to_string()),
+                                ("scope", &auth_code.scope.clone().unwrap()),
+                            ];
+
+                            HttpResponse::Ok().body(serde_urlencoded::to_string(params).unwrap())
+                        }
+                    }
+                }
+                Err(_) => {
+                    return HttpResponse::InternalServerError()
+                            .json(serde_json::json!({"status": "error","message": "Unable to grant access tokens at this time"}));
+                }
+            },
             Err(_) => {
                 return HttpResponse::InternalServerError()
-                        .json(serde_json::json!({"status": "error","message": "Unable to grant access tokens at this time"}));
+                    .json(serde_json::json!({"status": "error","message": "Unable to grant access tokens at this time"}));
             }
-        },
-        Err(_) => {
-            return HttpResponse::InternalServerError()
-                .json(serde_json::json!({"status": "error","message": "Unable to grant access tokens at this time"}));
         }
+    } else {
+        return HttpResponse::InternalServerError()
+            .json(serde_json::json!({"status": "error","message": "Unable to grant access tokens at this time"}));
     }
 }
 
@@ -984,16 +1066,74 @@ async fn create_client_authorization_token(
 }
 
 #[get("/handshake")]
-pub async fn init_handshake(settings: web::Data<Settings>) -> impl Responder {
+pub async fn init_handshake(
+    settings: web::Data<Settings>,
+    scopes: web::Data<Scopes>,
+) -> impl Responder {
+    let scope_keys = scopes.data.clone();
+
     HttpResponse::Ok()
         .json(serde_json::json!({
             "authorization_endpoint": format!("{}/auth/authorize", settings.application.base_url),
             "token_endpoint": format!("{}/auth/token", settings.application.base_url),
             "client_creation_endpoint": format!("{}/auth/authorize/create-client", settings.application.base_url),
-            "scopes_supported": ["world:read", "world:write", "backup:read", "backup:write", "user:read", "create-client"],
+            "scopes_supported": scope_keys,
             "grant_types_supported": ["authorization_code", "client_credentials"],
             "response_types_supported": ["code", "token"],
             "access_token_lifetime": settings.application.access_token_lifetime,
             "refresh_token_lifetime": settings.application.refresh_token_lifetime
         }))
+}
+
+#[post("/create_api_key")]
+pub async fn create_api_key(
+    data: web::Either<web::Json<CreateApiKey>, web::Form<CreateApiKey>>,
+    pool: web::Data<PgPool>,
+    auth_guard: AuthMiddleware,
+    scopes: web::Data<Scopes>,
+) -> impl Responder {
+    let api_data: CreateApiKey = match data {
+        web::Either::Left(data) => data.into_inner(),
+        web::Either::Right(data) => data.into_inner(),
+    };
+
+    let key_secret = generate_token(64);
+
+    let salt = SaltString::generate(&mut OsRng);
+    let key_secret_hash = Argon2::default()
+        .hash_password(key_secret.as_bytes(), &salt)
+        .expect("Error while hashing password");
+
+    let new_key = match sqlx::query_as!(
+        ApiKey,
+        "INSERT INTO api_keys (key_id,name,key_secret_hash,scope,expires,user_id) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
+        Uuid::new_v4(),
+        api_data.name,
+        key_secret_hash.to_string(),
+        scopes.vec_as_str(api_data.scopes),
+        chrono::Utc::now().naive_utc() + chrono::Duration::days(30),
+        Some(auth_guard.user.id)
+    ).fetch_one(pool.as_ref())
+    .await
+    {
+        Ok(api_key) => api_key,
+        Err(e) => {
+            return HttpResponse::UnprocessableEntity()
+                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+        }
+    };
+
+    let api_key = format!(
+        "cv_{}",
+        general_purpose::STANDARD.encode([new_key.key_id.to_string(), key_secret].join(" "))
+    );
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "status": "sucess",
+        "data": {
+            "api_key": api_key,
+            "epxires": new_key.expires,
+            "scopes": new_key.scope
+        }
+    }))
 }

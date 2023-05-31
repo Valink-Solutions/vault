@@ -2,9 +2,12 @@ use actix_web::{get, web, Error, HttpRequest, HttpResponse};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::auth::{
-    middleware::check_for_user,
-    schemas::{AuthorizeCreateClientQuery, AuthorizeQuery, LoginQuery},
+use crate::{
+    auth::{
+        middleware::check_for_user,
+        schemas::{AuthorizeCreateClientQuery, AuthorizeQuery, LoginQuery},
+    },
+    scopes::Scopes,
 };
 
 #[get("/login")]
@@ -54,6 +57,7 @@ async fn get_authorization_page(
     pool: web::Data<PgPool>,
     query: web::Query<AuthorizeQuery>,
     req: HttpRequest,
+    scopes: web::Data<Scopes>,
 ) -> Result<HttpResponse, Error> {
     let mut ctx = tera::Context::new();
 
@@ -104,15 +108,16 @@ async fn get_authorization_page(
 
     ctx.insert("app_name", &client.name);
     ctx.insert("client_id", &query_info.client_id);
-    ctx.insert(
-        "scopes",
-        &serde_json::json!(&client
-            .scope
-            .unwrap_or("read,write".to_string())
-            .split(',')
-            .map(|s| s.to_string())
-            .collect::<Vec<String>>()),
-    );
+
+    let client_scopes = query_info
+        .scope
+        .split(',')
+        .map(|s| s.to_string())
+        .collect::<Vec<String>>();
+
+    let final_scopes = scopes.validated_keys_hashmap(client_scopes);
+
+    ctx.insert("scopes", &final_scopes);
 
     if query_info.state.is_some() {
         ctx.insert("state", &query_info.state.unwrap_or("".to_string()));

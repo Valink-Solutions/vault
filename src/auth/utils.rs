@@ -9,12 +9,14 @@ use uuid::Uuid;
 use crate::{
     configuration::AdminSettings,
     database::models::{FilteredUser, User},
+    scopes::Scopes,
 };
 
 pub async fn create_vault_admin_if_not_exists(
     pool: &Pool<Postgres>,
     base_url: String,
     settings: AdminSettings,
+    scopes: Scopes,
 ) -> Result<(), sqlx::Error> {
     let salt = SaltString::generate(&mut OsRng);
     let hashed_password = Argon2::default()
@@ -56,7 +58,7 @@ pub async fn create_vault_admin_if_not_exists(
     let name = "Vault Backend";
     let redirect_uri = base_url;
     let grant_types = "authorization_code,refresh_token";
-    let scope = "read,write";
+    let scope = scopes.as_str();
 
     let client_uuid = Uuid::parse_str(&settings.client_id).unwrap();
 

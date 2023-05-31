@@ -4,13 +4,21 @@ use std::future::{ready, Ready};
 use actix_web::error::{ErrorInternalServerError, ErrorUnauthorized};
 use actix_web::{dev::Payload, Error as ActixWebError};
 use actix_web::{web, FromRequest, HttpRequest};
+use argon2::{
+    password_hash::{PasswordHash, PasswordVerifier},
+    Argon2,
+};
+use base64::{engine::general_purpose, Engine as _};
 use futures::executor::block_on;
+use futures::{future::BoxFuture, FutureExt};
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use uuid::Uuid;
 
 use crate::configuration::Settings;
 use crate::database::models::User;
+use crate::scopes::Scopes;
 
 use super::schemas::UserInfo;
 use super::token::verify_jwt_token;
@@ -39,11 +47,12 @@ impl FromRequest for AuthMiddleware {
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
         let pool: web::Data<PgPool> = req.app_data::<web::Data<PgPool>>().unwrap().clone();
         let settings: web::Data<Settings> = req.app_data::<web::Data<Settings>>().unwrap().clone();
+        let scopes: web::Data<Scopes> = req.app_data::<web::Data<Scopes>>().unwrap().clone();
 
         let access_token = match req.headers().get("Authorization") {
             Some(header_value) => {
                 if let Ok(auth_str) = header_value.to_str() {
-                    if auth_str.starts_with("Bearer ") {
+                    if auth_str.starts_with("Bearer ") || auth_str.starts_with("ApiKey ") {
                         auth_str[7..].to_string()
                     } else {
                         let json_error = ErrorResponse {
@@ -69,40 +78,93 @@ impl FromRequest for AuthMiddleware {
             }
         };
 
-        let access_token_details = match verify_jwt_token(
-            &access_token,
-            settings.application.public_key.expose_secret().clone(),
-        ) {
-            Ok(token_details) => token_details,
-            Err(e) => {
-                let json_error = ErrorResponse {
-                    status: "fail".to_string(),
-                    message: format!("{:?}", e),
+        let user_result: BoxFuture<Result<(Uuid, Option<String>), ()>> = if access_token
+            .starts_with("cv_")
+        {
+            let decoded_vec =
+                match general_purpose::STANDARD.decode(access_token.strip_prefix("cv_").unwrap()) {
+                    Ok(decoded_string) => decoded_string,
+                    Err(_) => {
+                        let json_error = ErrorResponse {
+                            status: "fail".to_string(),
+                            message: "Invalid token".to_string(),
+                        };
+                        return ready(Err(ErrorUnauthorized(json_error)));
+                    }
                 };
-                return ready(Err(ErrorUnauthorized(json_error)));
+
+            let decoded_key = String::from_utf8(decoded_vec).unwrap();
+
+            let pool_ref = pool.clone();
+
+            async move {
+                let key_parts: Vec<&str> = decoded_key.splitn(2, |c| c == ' ').collect();
+                let key_id = Uuid::parse_str(&key_parts[0]).unwrap();
+                let key_secret = key_parts[1];
+
+                let result = sqlx::query!(
+                    "SELECT user_id, scope, key_secret_hash FROM api_keys WHERE key_id = $1",
+                    key_id
+                )
+                .fetch_optional(pool_ref.as_ref())
+                .await;
+
+                match result {
+                    Ok(Some(row)) => {
+                        let parsed_hash = PasswordHash::new(&row.key_secret_hash).unwrap();
+
+                        let is_valid = Argon2::default()
+                            .verify_password(key_secret.as_bytes(), &parsed_hash)
+                            .is_ok();
+
+                        if !is_valid {
+                            Err(())
+                        } else {
+                            Ok((row.user_id, row.scope))
+                        }
+                    }
+                    Ok(None) => Err(()),
+                    Err(_) => Err(()),
+                }
             }
-        };
+            .boxed()
+        } else {
+            let access_token_details = match verify_jwt_token(
+                &access_token,
+                settings.application.public_key.expose_secret().clone(),
+            ) {
+                Ok(token_details) => token_details,
+                Err(e) => {
+                    let json_error = ErrorResponse {
+                        status: "fail".to_string(),
+                        message: format!("{:?}", e),
+                    };
+                    return ready(Err(ErrorUnauthorized(json_error)));
+                }
+            };
 
-        let pool_ref = pool.clone();
+            let pool_ref = pool.clone();
 
-        let user_result = async move {
-            let result = sqlx::query!(
-                "SELECT user_id FROM oauth_access_tokens WHERE access_token = $1",
-                access_token_details.token_uuid
-            )
-            .fetch_optional(pool_ref.as_ref())
-            .await;
+            async move {
+                let result = sqlx::query!(
+                    "SELECT user_id, scope FROM oauth_access_tokens WHERE access_token = $1",
+                    access_token_details.token_uuid
+                )
+                .fetch_optional(pool_ref.as_ref())
+                .await;
 
-            match result {
-                Ok(Some(row)) => Ok(row.user_id),
-                Ok(None) => Err(()),
-                Err(_) => Err(()),
+                match result {
+                    Ok(Some(row)) => Ok((row.user_id, row.scope)),
+                    Ok(None) => Err(()),
+                    Err(_) => Err(()),
+                }
             }
+            .boxed()
         };
 
         let user_exists_result = async move {
-            let user_id = match user_result.await {
-                Ok(user_id) => user_id,
+            let (user_id, scope) = match user_result.await {
+                Ok((user_id, scope)) => (user_id, scope),
                 Err(_) => {
                     let json_error = ErrorResponse {
                         status: "fail".to_string(),
@@ -118,18 +180,18 @@ impl FromRequest for AuthMiddleware {
                 .await;
 
             match query_result {
-                Ok(Some(user)) => Ok(user),
+                Ok(Some(user)) => Ok((user, scope)),
                 Ok(None) => {
                     let json_error = ErrorResponse {
                         status: "fail".to_string(),
-                        message: "the user belonging to this token no logger exists".to_string(),
+                        message: "the user belonging to this token no longer exists".to_string(),
                     };
                     Err(ErrorUnauthorized(json_error))
                 }
                 Err(_) => {
                     let json_error = ErrorResponse {
                         status: "error".to_string(),
-                        message: "Faled to check user existence".to_string(),
+                        message: "Failed to check user existence".to_string(),
                     };
                     Err(ErrorInternalServerError(json_error))
                 }
@@ -137,14 +199,15 @@ impl FromRequest for AuthMiddleware {
         };
 
         match block_on(user_exists_result) {
-            Ok(user) => ready(Ok(AuthMiddleware {
+            Ok((user, scope)) => ready(Ok(AuthMiddleware {
                 user,
-                scope: access_token_details
-                    .scope
-                    .to_string()
-                    .split(',')
-                    .map(|s| s.to_string())
-                    .collect(),
+                scope: scopes.validated_keys_vec(
+                    scope
+                        .unwrap_or("".to_string())
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .collect(),
+                ),
             })),
             Err(error) => ready(Err(error)),
         }
