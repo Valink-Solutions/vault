@@ -11,14 +11,16 @@ use argon2::{
 use base64::{engine::general_purpose, Engine as _};
 use futures::executor::block_on;
 use futures::{future::BoxFuture, FutureExt};
+use r2d2_redis::redis::Commands;
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::configuration::Settings;
-use crate::database::models::User;
+use crate::database::models::{OAuthAccessToken, User};
 use crate::scopes::Scopes;
+use crate::utilities::RedisPool;
 
 use super::schemas::UserInfo;
 use super::token::verify_jwt_token;
@@ -46,6 +48,8 @@ impl FromRequest for AuthMiddleware {
     type Future = Ready<Result<Self, Self::Error>>;
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
         let pool: web::Data<PgPool> = req.app_data::<web::Data<PgPool>>().unwrap().clone();
+        let redis_pool: web::Data<RedisPool> =
+            req.app_data::<web::Data<RedisPool>>().unwrap().clone();
         let settings: web::Data<Settings> = req.app_data::<web::Data<Settings>>().unwrap().clone();
         let scopes: web::Data<Scopes> = req.app_data::<web::Data<Scopes>>().unwrap().clone();
 
@@ -106,11 +110,11 @@ impl FromRequest for AuthMiddleware {
                     "SELECT user_id, scope, key_secret_hash FROM api_keys WHERE key_id = $1",
                     key_id
                 )
-                .fetch_optional(pool_ref.as_ref())
+                .fetch_one(pool_ref.as_ref())
                 .await;
 
                 match result {
-                    Ok(Some(row)) => {
+                    Ok(row) => {
                         let parsed_hash = PasswordHash::new(&row.key_secret_hash).unwrap();
 
                         let is_valid = Argon2::default()
@@ -123,7 +127,6 @@ impl FromRequest for AuthMiddleware {
                             Ok((row.user_id, row.scope))
                         }
                     }
-                    Ok(None) => Err(()),
                     Err(_) => Err(()),
                 }
             }
@@ -143,19 +146,28 @@ impl FromRequest for AuthMiddleware {
                 }
             };
 
-            let pool_ref = pool.clone();
+            // let pool_ref = pool.clone();
+            let mut conn = redis_pool.get().unwrap();
 
             async move {
-                let result = sqlx::query!(
-                    "SELECT user_id, scope FROM oauth_access_tokens WHERE access_token = $1",
+                // let result = sqlx::query!(
+                //     "SELECT user_id, scope FROM oauth_access_tokens WHERE access_token = $1",
+                //     access_token_details.token_uuid
+                // )
+                // .fetch_optional(pool_ref.as_ref())
+                // .await;
+
+                let result = conn.get::<_, String>(format!(
+                    "oauth_access_token:{}",
                     access_token_details.token_uuid
-                )
-                .fetch_optional(pool_ref.as_ref())
-                .await;
+                ));
 
                 match result {
-                    Ok(Some(row)) => Ok((row.user_id, row.scope)),
-                    Ok(None) => Err(()),
+                    Ok(data) => {
+                        let access_obj: OAuthAccessToken = serde_json::from_str(&data).unwrap();
+
+                        Ok((access_obj.user_id, Some(access_obj.scope)))
+                    }
                     Err(_) => Err(()),
                 }
             }
@@ -231,6 +243,7 @@ pub async fn check_for_user(
     };
 
     let settings: web::Data<Settings> = req.app_data::<web::Data<Settings>>().unwrap().clone();
+    let redis_pool: web::Data<RedisPool> = req.app_data::<web::Data<RedisPool>>().unwrap().clone();
 
     let access_token_details = match verify_jwt_token(
         &access_token,
@@ -247,24 +260,29 @@ pub async fn check_for_user(
         }
     };
 
-    let result = match sqlx::query!(
-        "SELECT user_id FROM oauth_access_tokens WHERE access_token = $1",
+    let mut conn = redis_pool.get().unwrap();
+
+    let result = conn.get::<_, String>(format!(
+        "oauth_access_token:{}",
         access_token_details.token_uuid
-    )
-    .fetch_optional(pool)
-    .await
-    {
-        Ok(row) => row.unwrap(),
+    ));
+
+    let access_obj = match result {
+        Ok(data) => {
+            let access_obj: OAuthAccessToken = serde_json::from_str(&data).unwrap();
+
+            access_obj
+        }
         Err(_) => {
             let json_error = ErrorResponse {
-                status: "fail".to_string(),
-                message: "the user belonging to this token no logger exists".to_string(),
+                status: "error".to_string(),
+                message: "Faled to check user existence".to_string(),
             };
-            return Err(ErrorUnauthorized(json_error));
+            return Err(ErrorInternalServerError(json_error));
         }
     };
 
-    let user_id = result.user_id;
+    let user_id = access_obj.user_id;
 
     let query_result = sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", user_id)
         .fetch_optional(pool)
@@ -290,11 +308,6 @@ pub async fn check_for_user(
 
     Ok(UserInfo {
         user,
-        scope: access_token_details
-            .scope
-            .to_string()
-            .split(',')
-            .map(|s| s.to_string())
-            .collect(),
+        scope: access_obj.scope.split(',').map(|s| s.to_string()).collect(),
     })
 }

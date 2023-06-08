@@ -9,6 +9,7 @@ use argon2::{
     Argon2,
 };
 use base64::{engine::general_purpose, Engine as _};
+use r2d2_redis::redis::Commands;
 use secrecy::ExposeSecret;
 use sqlx::{PgPool, Row};
 use url::Url;
@@ -18,17 +19,20 @@ use crate::{
     auth::{
         middleware::{check_for_user, AuthMiddleware},
         schemas::{
-            AcceptedAuthorization, AcceptedCreateClientAuthorization, CreateApiKey,
-            CreateClientRequest, LoginQuery, RevokeTokenQuery, TradeTokenQuery, UpdatePassword,
+            AcceptedAuthorization, AcceptedCreateClientAuthorization, ApiKeyTradeTokenQuery,
+            CreateApiKey, CreateClientRequest, LoginQuery, RevokeTokenQuery, TradeTokenQuery,
+            UpdatePassword,
         },
         token::{generate_jwt_token, generate_token, verify_jwt_token},
         utils::filter_user_record,
     },
     configuration::Settings,
     database::models::{
-        ApiKey, LoginUserSchema, OAuthAuthorizationToken, OAuthClient, RegisterUserSchema, User,
+        ApiKey, LoginUserSchema, OAuthAccessToken, OAuthAuthorizationToken, OAuthClient,
+        OAuthRefreshToken, RegisterUserSchema, User,
     },
     scopes::Scopes,
+    utilities::RedisPool,
 };
 
 #[post("/register")]
@@ -192,6 +196,7 @@ async fn register_user(
 async fn login_user(
     body: web::Either<web::Json<LoginUserSchema>, web::Form<LoginUserSchema>>,
     pool: web::Data<PgPool>,
+    redis_pool: web::Data<RedisPool>,
     query: web::Query<LoginQuery>,
     settings: web::Data<Settings>,
 ) -> impl Responder {
@@ -266,41 +271,106 @@ async fn login_user(
 
     let refresh_token = generate_token(64);
 
-    match sqlx::query!(
-        "INSERT INTO oauth_access_tokens (access_token,client_id,user_id,expires,scope) VALUES ($1, $2, $3, $4, $5)",
-        access_token_details.clone().token_uuid,
-        client_uuid,
-        user.id,
-        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30),
-        client_scope
-    )
-    .execute(pool.as_ref())
-    .await
-    {
-        Ok(_) => {}
-        Err(e) => {
-            return HttpResponse::UnprocessableEntity()
-                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
-        }
-    }
+    // match sqlx::query!(
+    //     "INSERT INTO oauth_access_tokens (access_token,client_id,user_id,expires,scope) VALUES ($1, $2, $3, $4, $5)",
+    //     access_token_details.clone().token_uuid,
+    //     client_uuid,
+    //     user.id,
+    //     chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30),
+    //     client_scope
+    // )
+    // .execute(pool.as_ref())
+    // .await
+    // {
+    //     Ok(_) => {}
+    //     Err(e) => {
+    //         return HttpResponse::UnprocessableEntity()
+    //             .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+    //     }
+    // }
 
-    match sqlx::query!(
-        "INSERT INTO oauth_refresh_tokens (refresh_token,client_id,user_id,expires,scope) VALUES ($1, $2, $3, $4, $5)",
-        refresh_token.clone(),
-        client_uuid,
-        user.id,
-        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60),
-        client_scope
-    )
-    .execute(pool.as_ref())
-    .await
-    {
+    // match sqlx::query!(
+    //     "INSERT INTO oauth_refresh_tokens (refresh_token,client_id,user_id,expires,scope) VALUES ($1, $2, $3, $4, $5)",
+    //     refresh_token.clone(),
+    //     client_uuid,
+    //     user.id,
+    //     chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60),
+    //     client_scope
+    // )
+    // .execute(pool.as_ref())
+    // .await
+    // {
+    //     Ok(_) => {}
+    //     Err(e) => {
+    //         return HttpResponse::UnprocessableEntity()
+    //             .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+    //     }
+    // }
+
+    let mut conn = redis_pool.get().unwrap();
+
+    let now = chrono::Utc::now().naive_utc();
+
+    let access_expiry = chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30);
+
+    let access_object = OAuthAccessToken {
+        access_token: access_token_details.token_uuid.to_string(),
+        client_id: client_uuid.to_string(),
+        user_id: user.id,
+        expires: access_expiry,
+        scope: client_scope.clone(),
+    };
+
+    let refresh_expiry = chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60);
+
+    let refresh_object = OAuthRefreshToken {
+        refresh_token: refresh_token.clone(),
+        client_id: client_uuid.to_string(),
+        user_id: user.id,
+        expires: refresh_expiry,
+        scope: client_scope,
+    };
+
+    let access_key = format!(
+        "oauth_access_token:{}",
+        access_token_details.token_uuid.to_string()
+    );
+
+    let access_value = serde_json::to_string(&access_object).unwrap();
+
+    match conn.set_ex::<String, String, ()>(
+        access_key,
+        access_value,
+        (access_expiry.timestamp() - now.timestamp())
+            .try_into()
+            .unwrap(),
+    ) {
         Ok(_) => {}
         Err(e) => {
-            return HttpResponse::UnprocessableEntity()
-                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+            return HttpResponse::InternalServerError().json(
+                serde_json::json!({"status": "error", "message": format!("Redis: {:?}", e)}),
+            );
         }
-    }
+    };
+
+    let refresh_key = format!("oauth_refresh_token:{}", refresh_token.clone());
+
+    let refresh_value = serde_json::to_string(&refresh_object).unwrap();
+
+    match conn.set_ex::<String, String, ()>(
+        refresh_key,
+        refresh_value,
+        (refresh_expiry.timestamp() - now.timestamp())
+            .try_into()
+            .unwrap(),
+    ) {
+        Ok(_) => {}
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(
+                serde_json::json!({"status": "error", "message": format!("Redis: {:?}", e)}),
+            );
+        }
+    };
 
     let access_token = access_token_details.token.unwrap();
 
@@ -357,6 +427,7 @@ async fn login_user(
 async fn refresh_access_token(
     req: HttpRequest,
     pool: web::Data<PgPool>,
+    redis_pool: web::Data<RedisPool>,
     settings: web::Data<Settings>,
 ) -> impl Responder {
     let message = "could not refresh access token";
@@ -383,25 +454,45 @@ async fn refresh_access_token(
         }
     };
 
-    let query_result = sqlx::query!(
-        "SELECT user_id FROM oauth_refresh_tokens WHERE refresh_token = $1",
-        refresh_token
-    )
-    .fetch_one(pool.as_ref())
-    .await;
+    // let query_result = sqlx::query!(
+    //     "SELECT user_id FROM oauth_refresh_tokens WHERE refresh_token = $1",
+    //     refresh_token
+    // )
+    // .fetch_one(pool.as_ref())
+    // .await;
 
-    let user_id = match query_result {
-        Ok(user) => user.user_id,
+    // let user_id = match query_result {
+    //     Ok(user) => user.user_id,
+    //     Err(_) => {
+    //         return HttpResponse::BadRequest()
+    //             .json(serde_json::json!({"status": "fail", "message": message}));
+    //     }
+    // };
+
+    let mut conn = redis_pool.get().unwrap();
+
+    let result = conn.get::<_, String>(format!("oauth_refresh_token:{}", refresh_token));
+
+    let refresh_obj = match result {
+        Ok(data) => {
+            let refresh_obj: OAuthRefreshToken = serde_json::from_str(&data).unwrap();
+
+            refresh_obj
+        }
         Err(_) => {
-            return HttpResponse::BadRequest()
+            return HttpResponse::InternalServerError()
                 .json(serde_json::json!({"status": "fail", "message": message}));
         }
     };
 
-    let query_result = sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", user_id)
-        .fetch_optional(pool.as_ref())
-        .await
-        .unwrap();
+    let query_result = sqlx::query_as!(
+        User,
+        "SELECT * FROM users WHERE id = $1",
+        refresh_obj.user_id
+    )
+    .fetch_optional(pool.as_ref())
+    .await
+    .unwrap();
 
     if query_result.is_none() {
         return HttpResponse::Forbidden()
@@ -431,44 +522,110 @@ async fn refresh_access_token(
 
     let new_refresh_token = generate_token(64);
 
-    match sqlx::query!(
-        "INSERT INTO oauth_access_tokens (access_token,client_id,user_id,expires,scope) VALUES ($1, $2, $3, $4, $5)",
-        access_token_details.token_uuid.clone(),
-        client_uuid,
-        user.id,
-        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30),
-        "world:read,world:write,backup:read,backup:write,user:read"
-    )
-    .execute(pool.as_ref())
-    .await
-    {
+    // match sqlx::query!(
+    //     "INSERT INTO oauth_access_tokens (access_token,client_id,user_id,expires,scope) VALUES ($1, $2, $3, $4, $5)",
+    //     access_token_details.token_uuid.clone(),
+    //     client_uuid,
+    //     user.id,
+    //     chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30),
+    //     "world:read,world:write,backup:read,backup:write,user:read"
+    // )
+    // .execute(pool.as_ref())
+    // .await
+    // {
+    //     Ok(_) => {}
+    //     Err(e) => {
+    //         return HttpResponse::UnprocessableEntity()
+    //             .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+    //     }
+    // }
+
+    // match sqlx::query!(
+    //     "INSERT INTO oauth_refresh_tokens (refresh_token,client_id,user_id,expires,scope) VALUES ($1, $2, $3, $4, $5)",
+    //     new_refresh_token.clone(),
+    //     client_uuid,
+    //     user.id,
+    //     chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60),
+    //     "world:read,world:write,backup:read,backup:write,user:read"
+    // )
+    // .execute(pool.as_ref())
+    // .await
+    // {
+    //     Ok(_) => {}
+    //     Err(e) => {
+    //         return HttpResponse::UnprocessableEntity()
+    //             .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+    //     }
+    // }
+
+    let now = chrono::Utc::now().naive_utc();
+
+    let access_expiry = chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30);
+
+    let access_object = OAuthAccessToken {
+        access_token: access_token_details.token_uuid.to_string(),
+        client_id: client_uuid.to_string(),
+        user_id: user.id,
+        expires: access_expiry,
+        scope: refresh_obj.scope.clone(),
+    };
+
+    let refresh_expiry = chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60);
+
+    let new_refresh_object = OAuthRefreshToken {
+        refresh_token: new_refresh_token.clone(),
+        client_id: client_uuid.to_string(),
+        user_id: user.id,
+        expires: refresh_expiry,
+        scope: refresh_obj.scope.clone(),
+    };
+
+    let access_key = format!(
+        "oauth_access_token:{}",
+        access_token_details.token_uuid.to_string()
+    );
+
+    let access_value = serde_json::to_string(&access_object).unwrap();
+
+    match conn.set_ex::<String, String, ()>(
+        access_key,
+        access_value,
+        (access_expiry.timestamp() - now.timestamp())
+            .try_into()
+            .unwrap(),
+    ) {
         Ok(_) => {}
         Err(e) => {
-            return HttpResponse::UnprocessableEntity()
-                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+            return HttpResponse::InternalServerError()
+                .json(serde_json::json!({"status": "error", "message": format!("{:?}", e)}));
         }
-    }
+    };
 
-    match sqlx::query!(
-        "INSERT INTO oauth_refresh_tokens (refresh_token,client_id,user_id,expires,scope) VALUES ($1, $2, $3, $4, $5)",
-        new_refresh_token.clone(),
-        client_uuid,
-        user.id,
-        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60),
-        "world:read,world:write,backup:read,backup:write,user:read"
-    )
-    .execute(pool.as_ref())
-    .await
-    {
+    let refresh_key = format!("oauth_refresh_token:{}", new_refresh_token.clone());
+
+    let refresh_value = serde_json::to_string(&new_refresh_object).unwrap();
+
+    match conn.set_ex::<String, String, ()>(
+        refresh_key,
+        refresh_value,
+        (refresh_expiry.timestamp() - now.timestamp())
+            .try_into()
+            .unwrap(),
+    ) {
         Ok(_) => {}
         Err(e) => {
-            return HttpResponse::UnprocessableEntity()
-                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+            return HttpResponse::InternalServerError()
+                .json(serde_json::json!({"status": "error", "message": format!("{:?}", e)}));
         }
-    }
+    };
 
-    HttpResponse::Ok()
-        .json(serde_json::json!({"status": "success", "access_token": access_token_details.token.unwrap(), "refresh_token": new_refresh_token}))
+    HttpResponse::Ok().json(serde_json::json!({
+        "token_type": "Bearer",
+        "access_token": access_token_details.token.unwrap(),
+        "refresh_token": new_refresh_token,
+        "expires_in": access_expiry,
+        "scope": refresh_obj.scope.clone()
+    }))
 }
 
 #[get("/users/me")]
@@ -564,6 +721,7 @@ async fn create_new_client(
 async fn get_authorization_token(
     authorization_info: web::Form<AcceptedAuthorization>,
     pool: web::Data<PgPool>,
+    redis_pool: web::Data<RedisPool>,
     req: HttpRequest,
 ) -> impl Responder {
     let user = match check_for_user(&pool, req).await {
@@ -595,21 +753,50 @@ async fn get_authorization_token(
 
     let authorization_code = generate_token(64);
 
-    match sqlx::query!(
-        "INSERT INTO oauth_authorization_codes (code,client_id,redirect_uri,user_id,expires,scope) VALUES ($1,$2,$3,$4,$5,$6)",
-        authorization_code,
-        client.client_id,
-        client.redirect_uri,
-        user.id,
-        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30),
-        authorization_info.scopes
-    )
-    .execute(pool.as_ref())
-    .await {
-        Ok(_) => {},
+    // match sqlx::query!(
+    //     "INSERT INTO oauth_authorization_codes (code,client_id,redirect_uri,user_id,expires,scope) VALUES ($1,$2,$3,$4,$5,$6)",
+    //     authorization_code,
+    //     client.client_id,
+    //     client.redirect_uri,
+    //     user.id,
+    //     chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30),
+    //     authorization_info.scopes
+    // )
+    // .execute(pool.as_ref())
+    // .await {
+    //     Ok(_) => {},
+    //     Err(e) => {
+    //         return HttpResponse::UnprocessableEntity()
+    //             .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+    //     }
+    // }
+
+    let expiry = chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30);
+
+    let auth_obj = OAuthAuthorizationToken {
+        code: authorization_code.clone(),
+        client_id: client.client_id,
+        redirect_uri: client.redirect_uri,
+        user_id: user.id,
+        expires: expiry,
+        scope: Some(authorization_info.scopes),
+    };
+
+    let mut conn = redis_pool.get().unwrap();
+
+    let now = chrono::Utc::now().naive_utc();
+
+    let key = format!("oauth_authorization_code:{}", authorization_code);
+    let value = serde_json::to_string(&auth_obj).unwrap();
+    match conn.set_ex::<String, String, ()>(
+        key,
+        value,
+        (expiry.timestamp() - now.timestamp()).try_into().unwrap(),
+    ) {
+        Ok(_) => {}
         Err(e) => {
-            return HttpResponse::UnprocessableEntity()
-                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+            return HttpResponse::InternalServerError()
+                .json(serde_json::json!({"status": "error", "message": format!("{:?}", e)}));
         }
     }
 
@@ -643,6 +830,7 @@ async fn get_authorization_token(
 async fn get_access_tokens(
     query: web::Either<web::Json<TradeTokenQuery>, web::Query<TradeTokenQuery>>,
     pool: web::Data<PgPool>,
+    redis_pool: web::Data<RedisPool>,
     settings: web::Data<Settings>,
     req: HttpRequest,
 ) -> impl Responder {
@@ -692,23 +880,23 @@ async fn get_access_tokens(
             }
         };
 
-        let auth_code = match sqlx::query_as!(
-            OAuthAuthorizationToken,
-            "SELECT * FROM oauth_authorization_codes WHERE code = $1",
-            info.code
-        )
-        .fetch_one(pool.as_ref())
-        .await
-        {
-            Ok(auth_code) => auth_code,
+        let mut conn = redis_pool.get().unwrap();
+
+        let result = conn.get::<_, String>(format!("oauth_authorization_code:{}", info.code));
+
+        let auth_obj = match result {
+            Ok(data) => {
+                let auth_obj: OAuthAuthorizationToken = serde_json::from_str(&data).unwrap();
+
+                auth_obj
+            }
             Err(_) => {
-                return HttpResponse::UnprocessableEntity().json(
-                    serde_json::json!({"status": "error", "message": "Invalid authorization code"}),
-                );
+                return HttpResponse::UnprocessableEntity()
+                    .json(serde_json::json!({"status": "error", "message": "Client does not match authorization code"}));
             }
         };
 
-        if auth_code.client_id != client.client_id {
+        if auth_obj.client_id != client.client_id {
             return HttpResponse::UnprocessableEntity()
                 .json(serde_json::json!({"status": "error", "message": "Client does not match authorization code"}));
         }
@@ -720,7 +908,7 @@ async fn get_access_tokens(
         }
 
         let info_url = Url::parse(&info.redirect_uri).expect("Failed to parse info.redirect_uri");
-        let auth_code_url = Url::parse(&auth_code.redirect_uri.unwrap())
+        let auth_code_url = Url::parse(&auth_obj.redirect_uri.unwrap())
             .expect("Failed to parse auth_code.redirect_uri");
 
         if info_url.scheme() != auth_code_url.scheme()
@@ -732,24 +920,10 @@ async fn get_access_tokens(
             );
         }
 
-        // if info.redirect_uri != auth_code.redirect_uri.unwrap() {
-        //     return HttpResponse::UnprocessableEntity()
-        //         .json(serde_json::json!({"status": "error", "message": "Redirect URI is unverified"}));
-        // }
-
-        let mut transaction = match pool.begin().await {
-            Ok(transaction) => transaction,
-            Err(e) => {
-                return HttpResponse::InternalServerError().json(
-                    serde_json::json!({"status": "error","message": format_args!("{:?}", e)}),
-                );
-            }
-        };
-
         let access_token_details = match generate_jwt_token(
-            auth_code.user_id,
+            auth_obj.user_id,
             client_uuid,
-            auth_code.scope.clone().unwrap(),
+            auth_obj.scope.clone().unwrap(),
             30,
             settings.application.private_key.expose_secret().clone(),
             settings.application.base_url.clone(),
@@ -764,96 +938,297 @@ async fn get_access_tokens(
 
         let refresh_token = generate_token(64);
 
-        match sqlx::query!(
-            "INSERT INTO oauth_access_tokens (access_token,client_id,user_id,expires,scope) VALUES ($1, $2, $3, $4, $5)",
-            access_token_details.clone().token_uuid,
-            client_uuid,
-            auth_code.user_id,
-            chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30),
-            auth_code.scope.clone().unwrap()
-        )
-        .execute(&mut transaction)
-        .await
-        {
+        let now = chrono::Utc::now().naive_utc();
+
+        let access_expiry = chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30);
+
+        let access_object = OAuthAccessToken {
+            access_token: access_token_details.token_uuid.to_string(),
+            client_id: client.client_id.to_string(),
+            user_id: auth_obj.user_id,
+            expires: access_expiry,
+            scope: auth_obj.scope.clone().unwrap(),
+        };
+
+        let refresh_expiry = chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60);
+
+        let refresh_object = OAuthRefreshToken {
+            refresh_token: refresh_token.clone(),
+            client_id: client.client_id.to_string(),
+            user_id: auth_obj.user_id,
+            expires: refresh_expiry,
+            scope: auth_obj.scope.clone().unwrap(),
+        };
+
+        let access_key = format!(
+            "oauth_access_token:{}",
+            access_token_details.token_uuid.to_string()
+        );
+
+        let access_value = serde_json::to_string(&access_object).unwrap();
+
+        match conn.set_ex::<String, String, ()>(
+            access_key,
+            access_value,
+            (access_expiry.timestamp() - now.timestamp())
+                .try_into()
+                .unwrap(),
+        ) {
             Ok(_) => {}
             Err(e) => {
-                return HttpResponse::UnprocessableEntity()
-                    .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
-            }
-        }
-
-        match sqlx::query!(
-            "INSERT INTO oauth_refresh_tokens (refresh_token,client_id,user_id,expires,scope) VALUES ($1, $2, $3, $4, $5)",
-            refresh_token.clone(),
-            client_uuid,
-            auth_code.user_id,
-            chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60),
-            auth_code.scope.clone().unwrap()
-        )
-        .execute(&mut transaction)
-        .await
-        {
-            Ok(_) => {}
-            Err(e) => {
-                return HttpResponse::UnprocessableEntity()
-                    .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
-            }
-        }
-
-        match sqlx::query!(
-            "DELETE FROM oauth_authorization_codes WHERE code = $1",
-            auth_code.code
-        )
-        .execute(&mut transaction)
-        .await
-        {
-            Ok(_) => match transaction.commit().await {
-                Ok(_) => {
-                    let accept_header = req.headers().get("Accept");
-
-                    let time = (chrono::Utc::now() + chrono::Duration::minutes(30)).timestamp();
-
-                    match accept_header {
-                        Some(header) => {
-                            if header.to_str().unwrap() == "application/json".to_string() {
-                                HttpResponse::Ok().json(serde_json::json!({
-                                    "token_type": "Bearer",
-                                    "access_token": access_token_details.token.unwrap(),
-                                    "refresh_token": refresh_token,
-                                    "expires_in": time,
-                                    "scope": auth_code.scope.clone().unwrap()
-                                }))
-                            } else {
-                                HttpResponse::Ok().json(serde_json::json!({
-                                    "token_type": "Bearer",
-                                    "access_token": access_token_details.token.unwrap(),
-                                    "refresh_token": refresh_token,
-                                    "expires_in": time,
-                                    "scope": auth_code.scope.clone().unwrap()
-                                }))
-                            }
-                        }
-                        None => {
-                            let params = &[
-                                ("token_type", "Bearer"),
-                                ("access_token", &access_token_details.token.unwrap()),
-                                ("refresh_token", &refresh_token),
-                                ("expires_in", &time.to_string()),
-                                ("scope", &auth_code.scope.clone().unwrap()),
-                            ];
-
-                            HttpResponse::Ok().body(serde_urlencoded::to_string(params).unwrap())
-                        }
-                    }
-                }
-                Err(_) => {
-                    return HttpResponse::InternalServerError()
-                            .json(serde_json::json!({"status": "error","message": "Unable to grant access tokens at this time"}));
-                }
-            },
-            Err(_) => {
                 return HttpResponse::InternalServerError()
-                    .json(serde_json::json!({"status": "error","message": "Unable to grant access tokens at this time"}));
+                    .json(serde_json::json!({"status": "error", "message": format!("{:?}", e)}));
+            }
+        };
+
+        let refresh_key = format!("oauth_refresh_token:{}", refresh_token.clone());
+
+        let refresh_value = serde_json::to_string(&refresh_object).unwrap();
+
+        match conn.set_ex::<String, String, ()>(
+            refresh_key,
+            refresh_value,
+            (refresh_expiry.timestamp() - now.timestamp())
+                .try_into()
+                .unwrap(),
+        ) {
+            Ok(_) => {}
+            Err(e) => {
+                return HttpResponse::InternalServerError()
+                    .json(serde_json::json!({"status": "error", "message": format!("{:?}", e)}));
+            }
+        };
+
+        let accept_header = req.headers().get("Accept");
+
+        let time = (chrono::Utc::now() + chrono::Duration::minutes(30)).timestamp();
+
+        match accept_header {
+            Some(header) => {
+                if header.to_str().unwrap() == "application/json".to_string() {
+                    HttpResponse::Ok().json(serde_json::json!({
+                        "token_type": "Bearer",
+                        "access_token": access_token_details.token.unwrap(),
+                        "refresh_token": refresh_token,
+                        "expires_in": time,
+                        "scope": auth_obj.scope.clone().unwrap()
+                    }))
+                } else {
+                    HttpResponse::Ok().json(serde_json::json!({
+                        "token_type": "Bearer",
+                        "access_token": access_token_details.token.unwrap(),
+                        "refresh_token": refresh_token,
+                        "expires_in": time,
+                        "scope": auth_obj.scope.clone().unwrap()
+                    }))
+                }
+            }
+            None => {
+                let params = &[
+                    ("token_type", "Bearer"),
+                    ("access_token", &access_token_details.token.unwrap()),
+                    ("refresh_token", &refresh_token),
+                    ("expires_in", &time.to_string()),
+                    ("scope", &auth_obj.scope.clone().unwrap()),
+                ];
+
+                HttpResponse::Ok().body(serde_urlencoded::to_string(params).unwrap())
+            }
+        }
+    } else {
+        return HttpResponse::InternalServerError()
+            .json(serde_json::json!({"status": "error","message": "Unable to grant access tokens at this time"}));
+    }
+}
+
+#[post("/token/apikey")]
+async fn get_access_tokens_from_apikey(
+    query: web::Either<web::Json<ApiKeyTradeTokenQuery>, web::Query<ApiKeyTradeTokenQuery>>,
+    pool: web::Data<PgPool>,
+    redis_pool: web::Data<RedisPool>,
+    settings: web::Data<Settings>,
+    req: HttpRequest,
+) -> impl Responder {
+    let info = match query {
+        web::Either::Left(data) => data.into_inner(),
+        web::Either::Right(data) => data.into_inner(),
+    };
+
+    let mut client_id = info.api_key;
+    let mut client_secret = info.api_key_secret;
+
+    if client_id.is_none() {
+        let auth_header = req.headers().get("Authorization");
+        if let Some(auth_header) = auth_header {
+            if let Ok(auth_header) = auth_header.to_str() {
+                if auth_header.starts_with("ApiKey ") {
+                    let encoded_credentials = &auth_header[7..];
+
+                    let decoded_vec = match general_purpose::STANDARD
+                        .decode(encoded_credentials.strip_prefix("cv_").unwrap())
+                    {
+                        Ok(decoded_string) => decoded_string,
+                        Err(_) => {
+                            return HttpResponse::UnprocessableEntity()
+                                .json(serde_json::json!({"status": "error", "message": "Invalid api key"}));
+                        }
+                    };
+
+                    let decoded_key = String::from_utf8(decoded_vec).unwrap();
+
+                    let key_parts: Vec<&str> = decoded_key.splitn(2, |c| c == ' ').collect();
+
+                    client_id = Some(key_parts[0].to_string());
+                    client_secret = Some(key_parts[1].to_string());
+                }
+            }
+        }
+    }
+
+    if let (Some(client_id), Some(client_secret)) = (client_id, client_secret) {
+        let client_uuid = Uuid::parse_str(&client_id).unwrap();
+
+        let client = match sqlx::query_as!(
+            ApiKey,
+            "SELECT * FROM api_keys WHERE key_id = $1",
+            client_uuid
+        )
+        .fetch_one(pool.as_ref())
+        .await
+        {
+            Ok(client) => client,
+            Err(_) => {
+                return HttpResponse::UnprocessableEntity()
+                    .json(serde_json::json!({"status": "error", "message": "Invalid api key"}));
+            }
+        };
+
+        let parsed_hash = PasswordHash::new(&client.key_secret_hash).unwrap();
+
+        let is_valid = Argon2::default()
+            .verify_password(client_secret.as_bytes(), &parsed_hash)
+            .is_ok();
+
+        if !is_valid {
+            return HttpResponse::UnprocessableEntity()
+                .json(serde_json::json!({"status": "error", "message": "Invalid api secret"}));
+        }
+
+        let mut conn = redis_pool.get().unwrap();
+
+        let access_token_details = match generate_jwt_token(
+            client.user_id,
+            client_uuid,
+            client.scope.clone().unwrap(),
+            30,
+            settings.application.private_key.expose_secret().clone(),
+            settings.application.base_url.clone(),
+        ) {
+            Ok(token_details) => token_details,
+            Err(e) => {
+                return HttpResponse::BadGateway().json(
+                    serde_json::json!({"status": "fail", "message": format_args!("{:?}", e)}),
+                );
+            }
+        };
+
+        let refresh_token = generate_token(64);
+
+        let now = chrono::Utc::now().naive_utc();
+
+        let access_expiry = chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30);
+
+        let access_object = OAuthAccessToken {
+            access_token: access_token_details.token_uuid.to_string(),
+            client_id: client.key_id.to_string(),
+            user_id: client.user_id,
+            expires: access_expiry,
+            scope: client.scope.clone().unwrap(),
+        };
+
+        let refresh_expiry = chrono::Utc::now().naive_utc() + chrono::Duration::minutes(60);
+
+        let refresh_object = OAuthRefreshToken {
+            refresh_token: refresh_token.clone(),
+            client_id: client.key_id.to_string(),
+            user_id: client.user_id,
+            expires: refresh_expiry,
+            scope: client.scope.clone().unwrap(),
+        };
+
+        let access_key = format!(
+            "oauth_access_token:{}",
+            access_token_details.token_uuid.to_string()
+        );
+
+        let access_value = serde_json::to_string(&access_object).unwrap();
+
+        match conn.set_ex::<String, String, ()>(
+            access_key,
+            access_value,
+            (access_expiry.timestamp() - now.timestamp())
+                .try_into()
+                .unwrap(),
+        ) {
+            Ok(_) => {}
+            Err(e) => {
+                return HttpResponse::InternalServerError()
+                    .json(serde_json::json!({"status": "error", "message": format!("{:?}", e)}));
+            }
+        };
+
+        let refresh_key = format!("oauth_refresh_token:{}", refresh_token.clone());
+
+        let refresh_value = serde_json::to_string(&refresh_object).unwrap();
+
+        match conn.set_ex::<String, String, ()>(
+            refresh_key,
+            refresh_value,
+            (refresh_expiry.timestamp() - now.timestamp())
+                .try_into()
+                .unwrap(),
+        ) {
+            Ok(_) => {}
+            Err(e) => {
+                return HttpResponse::InternalServerError()
+                    .json(serde_json::json!({"status": "error", "message": format!("{:?}", e)}));
+            }
+        };
+
+        let accept_header = req.headers().get("Accept");
+
+        let time = (chrono::Utc::now() + chrono::Duration::minutes(30)).timestamp();
+
+        match accept_header {
+            Some(header) => {
+                if header.to_str().unwrap() == "application/json".to_string() {
+                    HttpResponse::Ok().json(serde_json::json!({
+                        "token_type": "Bearer",
+                        "access_token": access_token_details.token.unwrap(),
+                        "refresh_token": refresh_token,
+                        "expires_in": time,
+                        "scope": client.scope.clone().unwrap()
+                    }))
+                } else {
+                    HttpResponse::Ok().json(serde_json::json!({
+                        "token_type": "Bearer",
+                        "access_token": access_token_details.token.unwrap(),
+                        "refresh_token": refresh_token,
+                        "expires_in": time,
+                        "scope": client.scope.clone().unwrap()
+                    }))
+                }
+            }
+            None => {
+                let params = &[
+                    ("token_type", "Bearer"),
+                    ("access_token", &access_token_details.token.unwrap()),
+                    ("refresh_token", &refresh_token),
+                    ("expires_in", &time.to_string()),
+                    ("scope", &client.scope.clone().unwrap()),
+                ];
+
+                HttpResponse::Ok().body(serde_urlencoded::to_string(params).unwrap())
             }
         }
     } else {
@@ -864,7 +1239,7 @@ async fn get_access_tokens(
 
 #[post("/revoke")]
 async fn revoke_token(
-    pool: web::Data<PgPool>,
+    redis_pool: web::Data<RedisPool>,
     query: web::Query<RevokeTokenQuery>,
     _auth_guard: AuthMiddleware,
     settings: web::Data<Settings>,
@@ -873,6 +1248,7 @@ async fn revoke_token(
 
     match info.token_type_hint {
         Some(type_hint) => {
+            let mut conn = redis_pool.get().unwrap();
             if type_hint == "access_token".to_string() {
                 let access_token_details = match verify_jwt_token(
                     &info.token,
@@ -887,15 +1263,14 @@ async fn revoke_token(
                     }
                 };
 
-                match sqlx::query!(
-                    "DELETE FROM oauth_access_tokens WHERE access_token = $1",
-                    access_token_details.token_uuid
-                )
-                .execute(pool.as_ref())
-                .await
-                {
+                let access_key = format!(
+                    "oauth_access_token:{}",
+                    access_token_details.token_uuid.to_string()
+                );
+
+                match conn.del::<_, ()>(access_key) {
                     Ok(result) => {
-                        if result.rows_affected() == 0 {
+                        if result == () {
                             return HttpResponse::NotFound().json(serde_json::json!({
                                 "status": "error",
                                 "message": "Access token does not exist."
@@ -910,15 +1285,11 @@ async fn revoke_token(
                     }
                 }
             } else {
-                match sqlx::query!(
-                    "DELETE FROM oauth_refresh_tokens WHERE refresh_token = $1",
-                    info.token
-                )
-                .execute(pool.as_ref())
-                .await
-                {
+                let refresh_key = format!("oauth_refresh_token:{}", info.token);
+
+                match conn.del::<_, ()>(refresh_key) {
                     Ok(result) => {
-                        if result.rows_affected() == 0 {
+                        if result == () {
                             return HttpResponse::NotFound().json(serde_json::json!({
                                 "status": "error",
                                 "message": "Refresh token does not exist."
@@ -935,16 +1306,17 @@ async fn revoke_token(
             }
         }
         None => {
-            match sqlx::query!(
-                "DELETE FROM oauth_refresh_tokens WHERE refresh_token = $1",
-                info.token
-            )
-            .execute(pool.as_ref())
-            .await
-            {
+            let mut conn = redis_pool.get().unwrap();
+
+            let refresh_key = format!("oauth_refresh_token:{}", info.token);
+
+            match conn.del::<_, ()>(refresh_key) {
                 Ok(result) => {
-                    if !result.rows_affected() == 0 {
-                        return HttpResponse::Ok().finish();
+                    if result == () {
+                        return HttpResponse::NotFound().json(serde_json::json!({
+                            "status": "error",
+                            "message": "Refresh token does not exist."
+                        }));
                     }
                 }
                 Err(_) => {
@@ -963,16 +1335,18 @@ async fn revoke_token(
                 Err(_) => return HttpResponse::Ok().finish(),
             };
 
-            match sqlx::query!(
-                "DELETE FROM oauth_access_tokens WHERE access_token = $1",
-                access_token_details.token_uuid
-            )
-            .execute(pool.as_ref())
-            .await
-            {
+            let access_key = format!(
+                "oauth_access_token:{}",
+                access_token_details.token_uuid.to_string()
+            );
+
+            match conn.del::<_, ()>(access_key) {
                 Ok(result) => {
-                    if !result.rows_affected() == 0 {
-                        return HttpResponse::Ok().finish();
+                    if result == () {
+                        return HttpResponse::NotFound().json(serde_json::json!({
+                            "status": "error",
+                            "message": "Access token does not exist."
+                        }));
                     }
                 }
                 Err(_) => {
@@ -992,6 +1366,7 @@ async fn revoke_token(
 async fn create_client_authorization_token(
     authorization_info: web::Form<AcceptedCreateClientAuthorization>,
     pool: web::Data<PgPool>,
+    redis_pool: web::Data<RedisPool>,
     req: HttpRequest,
 ) -> impl Responder {
     let user = match check_for_user(&pool, req).await {
@@ -1029,23 +1404,56 @@ async fn create_client_authorization_token(
 
     let authorization_code = generate_token(64);
 
-    match sqlx::query!(
-        "INSERT INTO oauth_authorization_codes (code,client_id,redirect_uri,user_id,expires,scope) VALUES ($1,$2,$3,$4,$5,$6)",
-        authorization_code,
-        client.client_id,
-        client.redirect_uri,
-        user.id,
-        chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30),
-        info.scopes
-    )
-    .execute(pool.as_ref())
-    .await {
-        Ok(_) => {},
+    // match sqlx::query!(
+    //     "INSERT INTO oauth_authorization_codes (code,client_id,redirect_uri,user_id,expires,scope) VALUES ($1,$2,$3,$4,$5,$6)",
+    //     authorization_code,
+    //     client.client_id,
+    //     client.redirect_uri,
+    //     user.id,
+    //     chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30),
+    //     info.scopes
+    // )
+    // .execute(pool.as_ref())
+    // .await {
+    //     Ok(_) => {},
+    //     Err(e) => {
+    //         return HttpResponse::UnprocessableEntity()
+    //             .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+    //     }
+    // }
+
+    let mut conn = redis_pool.get().unwrap();
+
+    let now = chrono::Utc::now().naive_utc();
+
+    let authorize_expiry = chrono::Utc::now().naive_utc() + chrono::Duration::minutes(30);
+
+    let auth_obj = OAuthAuthorizationToken {
+        code: authorization_code.clone(),
+        client_id: client.client_id,
+        user_id: user.id,
+        redirect_uri: client.redirect_uri.clone(),
+        expires: authorize_expiry,
+        scope: Some(info.scopes),
+    };
+
+    let auth_key = format!("oauth_authorization_code:{}", authorization_code);
+
+    let auth_value = serde_json::to_string(&auth_obj).unwrap();
+
+    match conn.set_ex::<String, String, ()>(
+        auth_key,
+        auth_value,
+        (authorize_expiry.timestamp() - now.timestamp())
+            .try_into()
+            .unwrap(),
+    ) {
+        Ok(_) => {}
         Err(e) => {
-            return HttpResponse::UnprocessableEntity()
-                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}));
+            return HttpResponse::InternalServerError()
+                .json(serde_json::json!({"status": "error", "message": format!("{:?}", e)}));
         }
-    }
+    };
 
     let query = &[
         ("code", authorization_code),
@@ -1132,6 +1540,7 @@ pub async fn create_api_key(
         "status": "sucess",
         "data": {
             "api_key": api_key,
+            // "api_secret": key_secret,
             "epxires": new_key.expires,
             "scopes": new_key.scope
         }

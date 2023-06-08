@@ -3,8 +3,8 @@ use actix_web::web;
 use self::{
     api::{
         create_api_key, create_client_authorization_token, create_new_client, get_access_tokens,
-        get_authorization_token, get_me_handler, login_user, refresh_access_token, register_user,
-        revoke_token, update_current_user_password,
+        get_access_tokens_from_apikey, get_authorization_token, get_me_handler, login_user,
+        refresh_access_token, register_user, revoke_token, update_current_user_password,
     },
     ui::{
         get_authorization_page, get_create_client_authorization_page, get_login_page,
@@ -34,6 +34,7 @@ pub fn auth_config(cfg: &mut web::ServiceConfig) {
             .service(update_current_user_password)
             .service(get_create_client_authorization_page)
             .service(create_client_authorization_token)
-            .service(create_api_key),
+            .service(create_api_key)
+            .service(get_access_tokens_from_apikey),
     );
 }

@@ -7,6 +7,7 @@ pub struct Settings {
     pub admin: AdminSettings,
     pub application: ApplicationSettings,
     pub database: DatabaseSettings,
+    pub redis: RedisSettings,
     pub storage: StorageSettings,
 }
 
@@ -26,6 +27,11 @@ pub struct ApplicationSettings {
 
 #[derive(serde::Deserialize, Clone)]
 pub struct DatabaseSettings {
+    pub url: String,
+}
+
+#[derive(serde::Deserialize, Clone)]
+pub struct RedisSettings {
     pub url: String,
 }
 

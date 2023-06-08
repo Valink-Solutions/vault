@@ -3,7 +3,7 @@ use argon2::{
     Argon2,
 };
 use secrecy::ExposeSecret;
-use sqlx::{Pool, Postgres, Row};
+use sqlx::Pool;
 use uuid::Uuid;
 
 use crate::{
@@ -13,22 +13,31 @@ use crate::{
 };
 
 pub async fn create_vault_admin_if_not_exists(
-    pool: &Pool<Postgres>,
+    database_url: String,
     base_url: String,
     settings: AdminSettings,
     scopes: Scopes,
 ) -> Result<(), sqlx::Error> {
+    let pool = Pool::connect(&database_url).await?;
+
     let salt = SaltString::generate(&mut OsRng);
     let hashed_password = Argon2::default()
         .hash_password(settings.password.expose_secret().as_bytes(), &salt)
         .expect("Error while hashing password");
 
-    let email_exists: bool = sqlx::query("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)")
-        .bind(settings.email.to_lowercase().clone())
-        .fetch_one(pool)
-        .await
-        .unwrap()
-        .get(0);
+    let email_exists = match sqlx::query!(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)",
+        settings.email.to_lowercase().clone()
+    )
+    .fetch_one(&pool)
+    .await
+    {
+        Ok(row) => match row.exists {
+            Some(exists_bool) => exists_bool,
+            None => false,
+        },
+        Err(_) => false,
+    };
 
     let user = if email_exists {
         sqlx::query_as!(
@@ -36,7 +45,7 @@ pub async fn create_vault_admin_if_not_exists(
             "SELECT * FROM users WHERE email = $1",
             settings.email.to_lowercase()
         )
-        .fetch_one(pool)
+        .fetch_one(&pool)
         .await
         .unwrap()
     } else {
@@ -50,7 +59,7 @@ pub async fn create_vault_admin_if_not_exists(
             "admin",
             chrono::Utc::now().naive_utc()
         )
-        .fetch_one(pool)
+        .fetch_one(&pool)
         .await
         .unwrap()
     };
@@ -68,7 +77,7 @@ pub async fn create_vault_admin_if_not_exists(
         "#,
         client_uuid
     )
-    .fetch_optional(pool)
+    .fetch_optional(&pool)
     .await?;
 
     if existing_client.is_none() {
@@ -85,7 +94,7 @@ pub async fn create_vault_admin_if_not_exists(
             scope,
             user.id
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
     }
 

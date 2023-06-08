@@ -96,6 +96,14 @@ pub struct TradeTokenQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ApiKeyTradeTokenQuery {
+    pub grant_type: String,
+    pub api_key: Option<String>,
+    pub api_key_secret: Option<String>,
+    pub code_verifier: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct RevokeTokenQuery {
     pub token: String,
     pub token_type_hint: Option<String>,
