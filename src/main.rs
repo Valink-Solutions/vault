@@ -7,22 +7,18 @@ use std::env;
 use std::sync::Arc;
 use vault::utilities::RedisPool;
 // use std::time::Duration;
+use r2d2::Pool;
+use r2d2_redis::RedisConnectionManager;
 use tera::Tera;
 use vault::auth::utils::create_vault_admin_if_not_exists;
 use vault::configuration::get_configuration;
 use vault::database::check_for_migrations;
 use vault::object::create_object_store;
 use vault::scopes::Scopes;
-// use vault::tasks::{
-//     delete_queued_worlds, TaskRunner,
-// };
-use r2d2::Pool;
-use r2d2_redis::RedisConnectionManager;
+use vault::tasks::{delete_queued_worlds, TaskRunner};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    // dotenvy::dotenv().ok();
-
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
     let configuration = get_configuration().expect("Failed to read configuration.");
@@ -66,18 +62,18 @@ async fn main() -> std::io::Result<()> {
         create_object_store(configuration.storage.clone()).expect("Failed to create object store"),
     );
 
-    // let runner = TaskRunner::new();
+    let runner = TaskRunner::new();
 
-    // let cloned_pool = postgres_pool.clone();
-    // let cloned_obj_store = object_store.clone();
-    // runner.run_task(std::time::Duration::from_secs(30 * 60), move || {
-    //     let inner_cloned_pool = cloned_pool.clone();
-    //     let inner_obj_store = cloned_obj_store.clone();
+    let cloned_pool = postgres_pool.clone();
+    let cloned_obj_store = object_store.clone();
+    runner.run_task(std::time::Duration::from_secs(30 * 60), move || {
+        let inner_cloned_pool = cloned_pool.clone();
+        let inner_obj_store = cloned_obj_store.clone();
 
-    //     async move {
-    //         delete_queued_worlds(&inner_cloned_pool, &inner_obj_store).await;
-    //     }
-    // });
+        async move {
+            delete_queued_worlds(&inner_cloned_pool, &inner_obj_store).await;
+        }
+    });
 
     info!("Starting ChunkVault's vault HTTP Server at {}", address);
 

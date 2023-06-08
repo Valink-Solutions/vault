@@ -4,11 +4,6 @@ use std::future::{ready, Ready};
 use actix_web::error::{ErrorInternalServerError, ErrorUnauthorized};
 use actix_web::{dev::Payload, Error as ActixWebError};
 use actix_web::{web, FromRequest, HttpRequest};
-use argon2::{
-    password_hash::{PasswordHash, PasswordVerifier},
-    Argon2,
-};
-use base64::{engine::general_purpose, Engine as _};
 use futures::executor::block_on;
 use futures::{future::BoxFuture, FutureExt};
 use r2d2_redis::redis::Commands;
@@ -56,7 +51,7 @@ impl FromRequest for AuthMiddleware {
         let access_token = match req.headers().get("Authorization") {
             Some(header_value) => {
                 if let Ok(auth_str) = header_value.to_str() {
-                    if auth_str.starts_with("Bearer ") || auth_str.starts_with("ApiKey ") {
+                    if auth_str.starts_with("Bearer ") {
                         auth_str[7..].to_string()
                     } else {
                         let json_error = ErrorResponse {
@@ -82,97 +77,38 @@ impl FromRequest for AuthMiddleware {
             }
         };
 
-        let user_result: BoxFuture<Result<(Uuid, Option<String>), ()>> = if access_token
-            .starts_with("cv_")
-        {
-            let decoded_vec =
-                match general_purpose::STANDARD.decode(access_token.strip_prefix("cv_").unwrap()) {
-                    Ok(decoded_string) => decoded_string,
-                    Err(_) => {
-                        let json_error = ErrorResponse {
-                            status: "fail".to_string(),
-                            message: "Invalid token".to_string(),
-                        };
-                        return ready(Err(ErrorUnauthorized(json_error)));
-                    }
+        let access_token_details = match verify_jwt_token(
+            &access_token,
+            settings.application.public_key.expose_secret().clone(),
+        ) {
+            Ok(token_details) => token_details,
+            Err(e) => {
+                let json_error = ErrorResponse {
+                    status: "fail".to_string(),
+                    message: format!("{:?}", e),
                 };
-
-            let decoded_key = String::from_utf8(decoded_vec).unwrap();
-
-            let pool_ref = pool.clone();
-
-            async move {
-                let key_parts: Vec<&str> = decoded_key.splitn(2, |c| c == ' ').collect();
-                let key_id = Uuid::parse_str(&key_parts[0]).unwrap();
-                let key_secret = key_parts[1];
-
-                let result = sqlx::query!(
-                    "SELECT user_id, scope, key_secret_hash FROM api_keys WHERE key_id = $1",
-                    key_id
-                )
-                .fetch_one(pool_ref.as_ref())
-                .await;
-
-                match result {
-                    Ok(row) => {
-                        let parsed_hash = PasswordHash::new(&row.key_secret_hash).unwrap();
-
-                        let is_valid = Argon2::default()
-                            .verify_password(key_secret.as_bytes(), &parsed_hash)
-                            .is_ok();
-
-                        if !is_valid {
-                            Err(())
-                        } else {
-                            Ok((row.user_id, row.scope))
-                        }
-                    }
-                    Err(_) => Err(()),
-                }
+                return ready(Err(ErrorUnauthorized(json_error)));
             }
-            .boxed()
-        } else {
-            let access_token_details = match verify_jwt_token(
-                &access_token,
-                settings.application.public_key.expose_secret().clone(),
-            ) {
-                Ok(token_details) => token_details,
-                Err(e) => {
-                    let json_error = ErrorResponse {
-                        status: "fail".to_string(),
-                        message: format!("{:?}", e),
-                    };
-                    return ready(Err(ErrorUnauthorized(json_error)));
-                }
-            };
-
-            // let pool_ref = pool.clone();
-            let mut conn = redis_pool.get().unwrap();
-
-            async move {
-                // let result = sqlx::query!(
-                //     "SELECT user_id, scope FROM oauth_access_tokens WHERE access_token = $1",
-                //     access_token_details.token_uuid
-                // )
-                // .fetch_optional(pool_ref.as_ref())
-                // .await;
-
-                let result = conn.get::<_, String>(format!(
-                    "oauth_access_token:{}",
-                    access_token_details.token_uuid
-                ));
-
-                match result {
-                    Ok(data) => {
-                        let access_obj: OAuthAccessToken = serde_json::from_str(&data).unwrap();
-
-                        Ok((access_obj.user_id, Some(access_obj.scope)))
-                    }
-                    Err(_) => Err(()),
-                }
-            }
-            .boxed()
         };
+
+        let mut conn = redis_pool.get().unwrap();
+
+        let user_result: BoxFuture<Result<(Uuid, Option<String>), ()>> = async move {
+            let result = conn.get::<_, String>(format!(
+                "oauth_access_token:{}",
+                access_token_details.token_uuid
+            ));
+
+            match result {
+                Ok(data) => {
+                    let access_obj: OAuthAccessToken = serde_json::from_str(&data).unwrap();
+
+                    Ok((access_obj.user_id, Some(access_obj.scope)))
+                }
+                Err(_) => Err(()),
+            }
+        }
+        .boxed();
 
         let user_exists_result = async move {
             let (user_id, scope) = match user_result.await {
