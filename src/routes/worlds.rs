@@ -19,6 +19,13 @@ async fn get_worlds_for_current_user(
     pool: web::Data<PgPool>,
     auth_guard: AuthMiddleware,
 ) -> impl Responder {
+    if !auth_guard.scope.contains(&"world:read".to_string()) {
+        return HttpResponse::Unauthorized().json(serde_json::json!({
+            "status": "fail",
+            "message": "You do not have the permissions to access this route"
+        }));
+    };
+
     let limit = query.limit.unwrap_or(100);
     let offset = query.offset.unwrap_or(0);
 
@@ -64,6 +71,13 @@ async fn create_new_world(
     pool: web::Data<PgPool>,
     auth_guard: AuthMiddleware,
 ) -> impl Responder {
+    if !auth_guard.scope.contains(&String::from("world:write")) {
+        return HttpResponse::Unauthorized().json(serde_json::json!({
+            "status": "fail",
+            "message": "You do not have the permissions to access this route"
+        }));
+    };
+
     let query_result = sqlx::query_as!(
         World,
         "INSERT INTO worlds (id,user_id,name,seed,edition,current_version,created_at,updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $7) RETURNING *",
@@ -99,6 +113,13 @@ async fn get_world_by_uuid(
     pool: web::Data<PgPool>,
     auth_guard: AuthMiddleware,
 ) -> impl Responder {
+    if !auth_guard.scope.contains(&String::from("world:read")) {
+        return HttpResponse::Unauthorized().json(serde_json::json!({
+            "status": "fail",
+            "message": "You do not have the permissions to access this route"
+        }));
+    };
+
     let world_uuid = match Uuid::parse_str(&world_id) {
         Ok(uuid) => uuid,
         Err(e) => {
@@ -141,6 +162,13 @@ async fn update_world_by_uuid(
     pool: web::Data<PgPool>,
     auth_guard: AuthMiddleware,
 ) -> impl Responder {
+    if !auth_guard.scope.contains(&String::from("world:write")) {
+        return HttpResponse::Unauthorized().json(serde_json::json!({
+            "status": "fail",
+            "message": "You do not have the permissions to access this route"
+        }));
+    };
+
     let world_uuid = match Uuid::parse_str(&world_id) {
         Ok(uuid) => uuid,
         Err(e) => {
@@ -196,6 +224,13 @@ async fn delete_world_by_uuid(
     pool: web::Data<PgPool>,
     auth_guard: AuthMiddleware,
 ) -> impl Responder {
+    if !auth_guard.scope.contains(&String::from("world:write")) {
+        return HttpResponse::Unauthorized().json(serde_json::json!({
+            "status": "fail",
+            "message": "You do not have the permissions to access this route"
+        }));
+    };
+
     let world_uuid = match Uuid::parse_str(&world_id) {
         Ok(uuid) => uuid,
         Err(e) => {

@@ -1,17 +1,17 @@
 use log::info;
 use sqlx::{migrate::MigrateDatabase, AnyConnection, Connection};
 
-pub async fn check_for_migrations() -> Result<(), sqlx::Error> {
-    let uri = dotenvy::var("DATABASE_URL").unwrap_or("sqlite:vault.db".to_string());
+use crate::configuration::DatabaseSettings;
 
-    if !sqlx::Any::database_exists(&uri).await? {
+pub async fn check_for_migrations(settings: DatabaseSettings) -> Result<(), sqlx::Error> {
+    if !sqlx::Any::database_exists(&settings.url).await? {
         info!("Creating database...");
-        sqlx::Any::create_database(&uri).await?;
+        sqlx::Any::create_database(&settings.url).await?;
     }
 
     info!("Running migrations...");
 
-    let mut conn: AnyConnection = AnyConnection::connect(&uri).await?;
+    let mut conn: AnyConnection = AnyConnection::connect(&settings.url).await?;
 
     sqlx::migrate!()
         .run(&mut conn)

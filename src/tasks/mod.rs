@@ -7,24 +7,62 @@ use log::{info, warn};
 use object_store::{path::Path, ObjectStore};
 pub use runner::TaskRunner;
 
-pub async fn delete_old_sessions(pool: &sqlx::PgPool) {
-    info!("Starting old session deletion.");
+// pub async fn delete_old_authorization_codes(pool: &sqlx::PgPool) {
+//     info!("Starting old authorization code deletion.");
 
-    let result = sqlx::query!(
-        "
-        DELETE FROM sessions
-        WHERE expires_at < $1
-        ",
-        chrono::Utc::now().naive_utc()
-    )
-    .execute(pool)
-    .await;
+//     let result = sqlx::query!(
+//         "
+//         DELETE FROM oauth_access_tokens
+//         WHERE expires < $1
+//         ",
+//         chrono::Utc::now().naive_utc()
+//     )
+//     .execute(pool)
+//     .await;
 
-    match result {
-        Ok(_) => info!("Successfully deleted old session records."),
-        Err(e) => warn!("Failed to delete old records from sessions: {:?}", e),
-    }
-}
+//     match result {
+//         Ok(_) => info!("Successfully deleted old session records."),
+//         Err(e) => warn!("Failed to delete old records from sessions: {:?}", e),
+//     }
+// }
+
+// pub async fn delete_old_access_tokens(pool: &sqlx::PgPool) {
+//     info!("Starting old access token deletion.");
+
+//     let result = sqlx::query!(
+//         "
+//         DELETE FROM oauth_access_tokens
+//         WHERE expires < $1
+//         ",
+//         chrono::Utc::now().naive_utc()
+//     )
+//     .execute(pool)
+//     .await;
+
+//     match result {
+//         Ok(_) => info!("Successfully deleted old session records."),
+//         Err(e) => warn!("Failed to delete old records from sessions: {:?}", e),
+//     }
+// }
+
+// pub async fn delete_old_refresh_tokens(pool: &sqlx::PgPool) {
+//     info!("Starting old refresh token deletion.");
+
+//     let result = sqlx::query!(
+//         "
+//         DELETE FROM oauth_refresh_tokens
+//         WHERE expires < $1
+//         ",
+//         chrono::Utc::now().naive_utc()
+//     )
+//     .execute(pool)
+//     .await;
+
+//     match result {
+//         Ok(_) => info!("Successfully deleted old session records."),
+//         Err(e) => warn!("Failed to delete old records from sessions: {:?}", e),
+//     }
+// }
 
 pub async fn delete_queued_worlds(pool: &sqlx::PgPool, object_store: &Arc<Box<dyn ObjectStore>>) {
     info!("Starting queued world deletion.");

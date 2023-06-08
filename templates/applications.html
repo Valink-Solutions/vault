@@ -1,0 +1,29 @@
+{% extends "layout.html" %}
+
+{% block title %}Login{% endblock title%}
+
+{% block body %}
+<div class="grow max-w-6xl mx-auto px-4">
+    <h1 class="font-black mx-auto text-2xl text-center my-4">ChunkVault</h1>
+    <div class="card w-full h-full">
+        <div class="card-body">
+            <div class="flex flex-row items-center justify-between w-full">
+                <h2 class="card-title">Applications</h2>
+                <div class="flex flex-row items-center gap-2">
+                    <div class="dropdown dropdown-end">
+                        <label tabindex="0" class="btn btn-outline mb-2 hover:fill-base-100 gap-1.5">
+                            {{ user["username"] }}
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"><path d="M19 18v-4h-2v4h-2l3 3l3-3h-2M11 4C8.8 4 7 5.8 7 8s1.8 4 4 4s4-1.8 4-4s-1.8-4-4-4m0 10c-4.4 0-8 1.8-8 4v2h9.5c-.3-.8-.5-1.6-.5-2.5c0-1.2.3-2.3.9-3.4c-.6 0-1.2-.1-1.9-.1"/></svg>
+                        </label>
+                        <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52">
+                            <li><a>Applications</a></li>
+                            <li><a>Settings</a></li>
+                            <li><a class="dropdown-danger">Logout</a></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock body %}

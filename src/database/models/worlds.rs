@@ -25,7 +25,6 @@ pub struct WorldVersion {
     pub version: i32,
     pub backup_path: String,
     pub created_at: Option<NaiveDateTime>,
-    pub game_mode: String,
     pub difficulty: String,
     pub allow_cheats: bool,
     pub difficulty_locked: bool,
@@ -46,7 +45,6 @@ pub struct WorldVersion {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct UpdateWorldVersionSchema {
-    pub game_mode: Option<String>,
     pub allow_cheats: Option<bool>,
     pub difficulty_locked: Option<bool>,
     pub spawn_x: Option<i32>,
@@ -80,7 +78,6 @@ pub struct UpdateWorldSchema {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateWorldVersionSchema {
-    pub game_mode: String,
     pub allow_cheats: bool,
     pub difficulty_locked: bool,
     pub spawn_x: i32,

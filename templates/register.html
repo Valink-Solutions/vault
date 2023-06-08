@@ -1,0 +1,42 @@
+{% extends "layout.html" %}
+
+{% block title %}Register{% endblock title%}
+
+{% block body %}
+<div class="flex items-center justify-center min-h-screen min-w-screen">
+    <div class="grow container mx-auto px-4 md:px-0">
+        <div class="card w-96 md:w-120 lg:w-144 bg-base-100 shadow-xl mx-auto">
+            <h1 class="font-black mx-auto mt-10 text-2xl">ChunkVault</h1>
+            <div class="card-body">
+                <h2 class="card-title mx-auto">Register</h2>
+                {% include "components/register_form.html" %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock body %}
+
+{% block script %}
+<script>
+    function validateForm(evt) {
+        const email = document.getElementById('email').value;
+        const confirmEmail = document.getElementById('confirm_email').value;
+        const password = document.getElementById('password').value;
+        const confirmPassword = document.getElementById('confirm_password').value;
+
+        if (email !== confirmEmail) {
+            alert('Emails do not match.');
+            evt.preventDefault();
+            return false;
+        }
+
+        if (password !== confirmPassword) {
+            alert('Passwords do not match.');
+            evt.preventDefault();
+            return false;
+        }
+
+        return true;
+    }
+</script>
+{% endblock script %}

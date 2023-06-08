@@ -1,0 +1,6 @@
+application:
+  port: 8000
+  access_token_lifetime: 36000
+  refresh_token_lifetime: 86400
+storage:
+  driver: "local"

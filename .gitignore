@@ -3,3 +3,5 @@
 .env
 *.pem
 /testing_data
+/node_modules
+fly.toml

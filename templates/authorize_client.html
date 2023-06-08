@@ -1,0 +1,66 @@
+{% extends "layout.html" %}
+
+{% block title %}Authorize '{{app_name}}'{% endblock title%}
+
+{% block body %}
+<div class="flex items-center justify-center min-h-screen min-w-screen">
+    <div class="grow container mx-auto px-4 md:px-0">
+        <div class="card w-96 md:w-120 lg:w-144 bg-base-100 shadow-xl mx-auto">
+            <h1 class="font-black mx-auto mt-10 text-2xl">ChunkVault</h1>
+            <div class="card-body">
+                <h3 class="mx-auto">Authorize</h3>
+                <h2 class="card-title mx-auto text-center">"{{app_name}}"</h2>
+                <h3 class="mx-auto text-center">for the following permissions</h3>
+                <form id="authorizeForm" action="/auth/authorize/create-client" method="post" class="form-control gap-4 mt-4">
+                    {% for key, value in scopes %}
+                        <div class="flex flex-col bg-base-200 bg-opacity-50 p-2 rounded-sm">
+                            <label class="label cursor-pointer pb-1">
+                                <span class="label-text capitalize leading-4">{{key | replace(from=":", to=" ")}}</span> 
+                                <input id="{{key}}" name="{{key}}" type="checkbox" checked="checked" class="checkbox" />
+                            </label>
+                            <span class="text-xs opacity-50 pl-1">{{ value }}</span>
+                        </div>
+                    {% endfor %}
+                    <input type="hidden" id="scopes" name="scopes" />
+                    <input type="hidden" id="client_name" name="client_name" value="{{app_name}}" />
+                    <input type="hidden" id="redirect_uri" name="redirect_uri" value="{{redirect_uri}}" />
+                    <input type="hidden" id="grant_types" name="grant_types" value="{{grant_types}}" />
+                    {% if state %}
+                    <input type="hidden" id="state" name="state" value="{{state}}" />
+                    {% endif %}
+                    <button type="submit" class="btn btn-primary">Authorize</button>
+                    <a href="/auth/login" class="btn btn-secondary">Cancel</a>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock body %}
+
+{% block script %}
+<script>
+    function checkAndPushScope(scope, scopesArray) {
+        const checkbox = document.getElementById(scope);
+        if (checkbox.checked) {
+            scopesArray.push(scope);
+            document.getElementById('scopes').value = scopesArray.join(', ');
+        }
+    }
+
+    const scopesData = {{ scopes | json_encode | safe }};
+
+    document.getElementById('authorizeForm').addEventListener('submit', function(event) {
+        event.preventDefault();
+
+        const all_scopes = [];
+
+        Object.keys(scopesData).forEach(scope => {
+            checkAndPushScope(scope, all_scopes);
+        });
+
+        document.getElementById('scopes').value = all_scopes.join(', ');
+
+        this.submit();
+    });
+</script>
+{% endblock script %}
