@@ -668,38 +668,6 @@
     },
     "query": "\n                    DELETE FROM deleted_worlds\n                    WHERE id = $1\n                    "
   },
-  "825cea41daa51b51a301478f9200beef9a2acf1fe5f163e35ceffefe2899e038": {
-    "describe": {
-      "columns": [
-        {
-          "name": "user_id",
-          "ordinal": 0,
-          "type_info": "Uuid"
-        },
-        {
-          "name": "scope",
-          "ordinal": 1,
-          "type_info": "Varchar"
-        },
-        {
-          "name": "key_secret_hash",
-          "ordinal": 2,
-          "type_info": "Varchar"
-        }
-      ],
-      "nullable": [
-        false,
-        true,
-        false
-      ],
-      "parameters": {
-        "Left": [
-          "Uuid"
-        ]
-      }
-    },
-    "query": "SELECT user_id, scope, key_secret_hash FROM api_keys WHERE key_id = $1"
-  },
   "843923b9a0257cf80f1dff554e7dc8fdfc05f489328e8376513124dfb42996e3": {
     "describe": {
       "columns": [

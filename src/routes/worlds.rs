@@ -293,14 +293,18 @@ async fn delete_world_by_uuid(
                     };
                 }
                 Err(e) => {
+                    let _ = transaction.rollback().await;
                     return HttpResponse::InternalServerError().json(
                         serde_json::json!({"status": "error","message": format_args!("{:?}", e)}),
                     );
                 }
             };
         }
-        Err(e) => HttpResponse::InternalServerError()
-            .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)})),
+        Err(e) => {
+            let _ = transaction.rollback().await;
+            HttpResponse::InternalServerError()
+                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)}))
+        }
     }
 }
 
