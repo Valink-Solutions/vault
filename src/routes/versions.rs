@@ -58,14 +58,6 @@ pub async fn create_new_world_version(
         }
     }
 
-    let mut transaction = match pool.begin().await {
-        Ok(transaction) => transaction,
-        Err(e) => {
-            return HttpResponse::InternalServerError()
-                .json(serde_json::json!({"status": "error","message": format_args!("{:?}", e)}));
-        }
-    };
-
     let query_result = sqlx::query_as!(
         WorldVersion,
         r#"INSERT INTO world_versions (
@@ -117,45 +109,19 @@ pub async fn create_new_world_version(
         body.difficulty,
         chrono::Utc::now().naive_utc()
     )
-    .fetch_one(&mut transaction)
+    .fetch_one(pool.as_ref())
     .await;
 
     match query_result {
         Ok(world_version) => {
-            match sqlx::query!(
-                "UPDATE worlds SET current_version = $1 WHERE id = $2",
-                world.current_version + 1,
-                world.id
-            )
-            .execute(&mut transaction)
-            .await
-            {
-                Ok(_) => {
-                    match transaction.commit().await {
-                        Ok(_) => {
-                            let world_response = serde_json::json!({"status": "success","data": serde_json::json!({
-                                "world": world,
-                                "version": world_version
-                            })});
+            let world_response = serde_json::json!({"status": "success","data": serde_json::json!({
+                "world": world,
+                "version": world_version
+            })});
 
-                            return HttpResponse::Ok().json(world_response);
-                        }
-                        Err(e) => {
-                            return HttpResponse::InternalServerError()
-                                .json(serde_json::json!({"status": "error","message": format_args!("{:?}", e)}));
-                        }
-                    };
-                }
-                Err(e) => {
-                    let _ = transaction.rollback().await;
-                    return HttpResponse::InternalServerError().json(
-                        serde_json::json!({"status": "error","message": format_args!("{:?}", e)}),
-                    );
-                }
-            };
+            return HttpResponse::Ok().json(world_response);
         }
         Err(e) => {
-            let _ = transaction.rollback().await;
             return HttpResponse::InternalServerError()
                 .json(serde_json::json!({"status": "error","message": format_args!("{:?}", e)}));
         }
@@ -256,7 +222,7 @@ pub async fn upload_world_version(
         })));
     };
 
-    const BUFFER_SIZE: usize = 5 * 1024 * 1024; // 5MB
+    const BUFFER_SIZE: usize = 5 * 1024 * 1024;
 
     let world_id = path_info.world_id.to_string();
     let version_id = path_info.version_id.to_string();
@@ -314,7 +280,12 @@ pub async fn upload_world_version(
         }
     }
 
-    // let file_path: Path = version.backup_path.try_into().unwrap();
+    let old_file_path = version.backup_path;
+
+    if old_file_path.len() >= 1 {
+        return Ok(HttpResponse::Conflict()
+            .json(serde_json::json!({"status": "error", "message": "Version already has a file associated with it"})));
+    }
 
     let file_path: Path = format!(
         "{}/{}/{}-{}.zip",
@@ -362,28 +333,61 @@ pub async fn upload_world_version(
     .await;
 
     if let Err(e) = result {
-        error!("Could not upload world file, aborting.");
+        error!("Could not upload world file, aborting. {:?}", e);
         object_store.abort_multipart(&file_path, &id).await.unwrap();
-        return Err(e); // or handle the error in a way that is appropriate for your application
+        return Err(e);
     }
+
+    let mut transaction = match pool.begin().await {
+        Ok(transaction) => transaction,
+        Err(e) => {
+            return Ok(HttpResponse::InternalServerError()
+                .json(serde_json::json!({"status": "error","message": format_args!("{:?}", e)})));
+        }
+    };
 
     match sqlx::query!(
         "UPDATE world_versions SET backup_path = $1 WHERE id = $2",
         file_path.to_string(),
         version.id
     )
-    .execute(pool.as_ref())
+    .execute(&mut transaction)
     .await
     {
         Ok(_) => {}
         Err(e) => {
+            let _ = transaction.rollback().await;
             return Ok(HttpResponse::BadRequest()
                 .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)})));
         }
     };
 
-    Ok(HttpResponse::Accepted()
-        .json(serde_json::json!({"status": "success", "message": format!("Version: {} successfully uploaded.", version.version)})))
+    match sqlx::query!(
+        "UPDATE worlds SET current_version = $1 WHERE id = $2",
+        world.current_version + 1,
+        world.id
+    )
+    .execute(&mut transaction)
+    .await
+    {
+        Ok(_) => {}
+        Err(e) => {
+            let _ = transaction.rollback().await;
+            return Ok(HttpResponse::BadRequest()
+                .json(serde_json::json!({"status": "error", "message": format_args!("{}", e)})));
+        }
+    };
+
+    match transaction.commit().await {
+        Ok(_) => {
+            Ok(HttpResponse::Accepted()
+                .json(serde_json::json!({"status": "success", "message": format!("Version: {} successfully uploaded.", version.version)})))
+        }
+        Err(e) => {
+            return Ok(HttpResponse::InternalServerError()
+                .json(serde_json::json!({"status": "error","message": format_args!("{:?}", e)})));
+        }
+    }
 }
 
 #[get("/{world_id}/versions/{version_id}/download")]
