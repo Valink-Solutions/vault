@@ -12,7 +12,7 @@ storage:
   path: "./testing_data"
   region: "auto"
   endpoint: "http://localhost:9000"
-  bucket_name: "testing_data"
+  bucket_name: "chunkvault-testing"
   access_key_id: "minioadmin"
   secret_key: "minioadmin"
 admin:

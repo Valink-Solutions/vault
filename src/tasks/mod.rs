@@ -2,69 +2,11 @@ pub mod runner;
 
 use std::sync::Arc;
 
-use futures::StreamExt;
 use log::{info, warn};
-use object_store::{path::Path, ObjectStore};
 pub use runner::TaskRunner;
+use s3::Bucket;
 
-// pub async fn delete_old_authorization_codes(pool: &sqlx::PgPool) {
-//     info!("Starting old authorization code deletion.");
-
-//     let result = sqlx::query!(
-//         "
-//         DELETE FROM oauth_access_tokens
-//         WHERE expires < $1
-//         ",
-//         chrono::Utc::now().naive_utc()
-//     )
-//     .execute(pool)
-//     .await;
-
-//     match result {
-//         Ok(_) => info!("Successfully deleted old session records."),
-//         Err(e) => warn!("Failed to delete old records from sessions: {:?}", e),
-//     }
-// }
-
-// pub async fn delete_old_access_tokens(pool: &sqlx::PgPool) {
-//     info!("Starting old access token deletion.");
-
-//     let result = sqlx::query!(
-//         "
-//         DELETE FROM oauth_access_tokens
-//         WHERE expires < $1
-//         ",
-//         chrono::Utc::now().naive_utc()
-//     )
-//     .execute(pool)
-//     .await;
-
-//     match result {
-//         Ok(_) => info!("Successfully deleted old session records."),
-//         Err(e) => warn!("Failed to delete old records from sessions: {:?}", e),
-//     }
-// }
-
-// pub async fn delete_old_refresh_tokens(pool: &sqlx::PgPool) {
-//     info!("Starting old refresh token deletion.");
-
-//     let result = sqlx::query!(
-//         "
-//         DELETE FROM oauth_refresh_tokens
-//         WHERE expires < $1
-//         ",
-//         chrono::Utc::now().naive_utc()
-//     )
-//     .execute(pool)
-//     .await;
-
-//     match result {
-//         Ok(_) => info!("Successfully deleted old session records."),
-//         Err(e) => warn!("Failed to delete old records from sessions: {:?}", e),
-//     }
-// }
-
-pub async fn delete_queued_worlds(pool: &sqlx::PgPool, object_store: &Arc<Box<dyn ObjectStore>>) {
+pub async fn delete_queued_worlds(pool: &sqlx::PgPool, object_store: &Arc<Bucket>) {
     info!("Starting queued world deletion.");
 
     let result = sqlx::query!(
@@ -78,29 +20,20 @@ pub async fn delete_queued_worlds(pool: &sqlx::PgPool, object_store: &Arc<Box<dy
     match result {
         Ok(worlds) => {
             for world in worlds {
-                let prefix: Path = format!("{}/{}", world.user_id, world.world_id)
-                    .try_into()
-                    .unwrap();
-                match object_store.list(Some(&prefix)).await {
-                    Ok(mut stream) => {
-                        // let mut stream = stream.into_inner();
-                        while let Some(item) = stream.next().await {
-                            match item {
-                                Ok(object_meta) => {
-                                    // Perform desired operations on each ObjectMeta here
-                                    println!("ObjectMeta: {:?}", object_meta);
+                let prefix = format!("{}/{}", world.user_id, world.world_id);
+                match object_store.list(prefix, Some("/".to_string())).await {
+                    Ok(stream) => {
+                        let mut stream = stream.into_iter();
+                        while let Some(item) = stream.next() {
+                            // Perform desired operations on each ObjectMeta here
+                            println!("ObjectMeta: {:?}", item);
 
-                                    match object_store.delete(&object_meta.location).await {
-                                        Ok(_) => {}
-                                        Err(e) => {
-                                            warn!("Failed to delete queued worlds: {:?}", e)
-                                        }
-                                    };
-                                }
+                            match object_store.delete_object(&item.name).await {
+                                Ok(_) => {}
                                 Err(e) => {
-                                    eprintln!("Error processing item: {:?}", e);
+                                    warn!("Failed to delete queued worlds: {:?}", e)
                                 }
-                            }
+                            };
                         }
                     }
                     Err(e) => warn!("Failed to delete queued worlds: {:?}", e),

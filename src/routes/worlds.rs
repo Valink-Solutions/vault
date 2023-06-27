@@ -9,8 +9,10 @@ use crate::{
 };
 
 use super::versions::{
-    create_new_world_version, delete_world_version_by_uuid, download_world_by_version_uuid,
-    get_world_versions_by_uuid, update_world_version_by_uuid, upload_world_version,
+    abort_chunked_upload, create_new_world_version, delete_world_version_by_uuid,
+    download_world_by_version_uuid, end_chunked_upload, get_version_by_uuid,
+    get_world_versions_by_uuid, start_chunked_upload, update_world_version_by_uuid, upload_chunk,
+    upload_world_version,
 };
 
 #[get("")]
@@ -320,7 +322,12 @@ pub fn worlds_config(cfg: &mut web::ServiceConfig) {
             .service(get_worlds_for_current_user)
             .service(update_world_by_uuid)
             .service(delete_world_by_uuid)
+            .service(get_version_by_uuid)
             .service(update_world_version_by_uuid)
-            .service(delete_world_version_by_uuid),
+            .service(delete_world_version_by_uuid)
+            .service(start_chunked_upload)
+            .service(upload_chunk)
+            .service(end_chunked_upload)
+            .service(abort_chunked_upload),
     );
 }
