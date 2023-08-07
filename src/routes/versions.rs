@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use actix_multipart::{Multipart, form::MultipartForm};
+use actix_multipart::Multipart;
 use actix_web::{delete, get, patch, post, put, web, HttpResponse, Responder};
 use futures_util::StreamExt as _;
 use log::error;
@@ -15,7 +15,7 @@ use crate::{
     database::models::{CreateWorldVersionSchema, UpdateWorldVersionSchema, World, WorldVersion},
     utilities::{
         ChunkedUploadQuery, ChunkedWorldVersionPath, PageQuery, PartDeserialize, RedisPool,
-        WorldVersionPath, ChunkedUploadForm,
+        WorldVersionPath,
     },
 };
 
@@ -227,8 +227,6 @@ pub async fn upload_world_version(
 
     let object_store = object_store.into_inner();
 
-    // const BUFFER_SIZE: usize = 10 * 1024 * 1024;
-
     let world_id = path_info.world_id.to_string();
     let version_id = path_info.version_id.to_string();
 
@@ -300,28 +298,79 @@ pub async fn upload_world_version(
         chrono::Utc::now().naive_utc()
     );
 
-    let file_bytes = match payload.next().await {
+    let upload_id = match object_store
+        .initiate_multipart_upload(&file_path, "application/octet-stream")
+        .await
+    {
+        Ok(response) => response.upload_id,
+        Err(e) => {
+            error!("{:?}", e);
+            return Ok(HttpResponse::BadRequest()
+                .json(serde_json::json!({"status": "error", "message": format_args!("{:?}", e)})));
+        }
+    };
+
+    let mut part_number = 1;
+    let mut etags = Vec::new();
+
+    match payload.next().await {
         Some(item) => {
             let mut field = item.unwrap();
             let mut bytes = Vec::new();
             while let Some(chunk) = field.next().await {
                 match chunk {
                     Ok(chunk) => {
-                        let cap = 500 * 1024 * 1024;
-
-                        if bytes.len() >= cap {
-                            return Ok(HttpResponse::BadRequest()
-                                .json(serde_json::json!({"status": "error", "message": "File to large for default upload limit."})));
-                        } else {
-                            bytes.extend_from_slice(&chunk);
+                        bytes.extend_from_slice(&chunk);
+                        if bytes.len() >= 5 * 1024 * 1024 {
+                            // 5MB
+                            let etag = match object_store
+                                .put_multipart_chunk(
+                                    bytes.clone(),
+                                    &file_path,
+                                    part_number,
+                                    &upload_id,
+                                    "application/octet-stream",
+                                )
+                                .await
+                            {
+                                Ok(etag) => etag,
+                                Err(e) => {
+                                    error!("{:?}", e);
+                                    return Ok(HttpResponse::InternalServerError()
+                                        .json(serde_json::json!({"status": "error", "message": "Failed to upload part"})));
+                                }
+                            };
+                            etags.push(etag);
+                            part_number += 1;
+                            bytes.clear();
                         }
                     }
                     Err(e) => {
-                        error!("{:?}", e)
+                        error!("{:?}", e);
                     }
                 };
             }
-            bytes
+            // Upload the last part if it's less than 5MB
+            if !bytes.is_empty() {
+                let etag = match object_store
+                    .put_multipart_chunk(
+                        bytes,
+                        &file_path,
+                        part_number,
+                        &upload_id,
+                        "application/octet-stream",
+                    )
+                    .await
+                {
+                    Ok(etag) => etag,
+                    Err(e) => {
+                        error!("{:?}", e);
+                        return Ok(HttpResponse::InternalServerError()
+                            .json(serde_json::json!({"status": "error", "message": "Failed to upload part"})));
+                    }
+                };
+                etags.push(etag);
+            }
         }
         None => {
             return Ok(HttpResponse::BadRequest()
@@ -330,7 +379,7 @@ pub async fn upload_world_version(
     };
 
     match object_store
-        .put_object(file_path.clone(), &file_bytes)
+        .complete_multipart_upload(&file_path, &upload_id, etags)
         .await
     {
         Ok(_) => {}
@@ -783,6 +832,7 @@ pub async fn start_chunked_upload(
     let query = query.into_inner();
 
     let parts = query.part.unwrap_or(1);
+    let content_type = query.content_type.unwrap_or("application/zip".to_string());
 
     let world_id = path_info.world_id.to_string();
     let version_id = path_info.version_id.to_string();
@@ -840,18 +890,20 @@ pub async fn start_chunked_upload(
         }
     }
 
-    // let upload_id = Uuid::new_v4().to_string();
+    let redis_upload_id = Uuid::new_v4().to_string();
+
+    let created_at = chrono::Utc::now().naive_utc();
 
     let file_path = format!(
         "{}/{}/{}-{}.zip",
         world.user_id,
         world.id,
         version.id,
-        chrono::Utc::now().naive_utc()
+        created_at.clone()
     );
 
     let upload_id = match object_store
-        .initiate_multipart_upload(&file_path, &query.content_type)
+        .initiate_multipart_upload(&file_path, "application/zip")
         .await
     {
         Ok(response) => response.upload_id,
@@ -868,12 +920,14 @@ pub async fn start_chunked_upload(
         "version_id": version.id.to_string(),
         "user_id": auth_guard.user.id.to_string(),
         "upload_id": upload_id,
+        "file_path": file_path,
+        "content_type": content_type,
         "num_parts": parts,
         "name": query.name,
-        "created_at": chrono::Utc::now().naive_utc()
+        "created_at": created_at
     });
 
-    match conn.set::<String, String, ()>(format!("upload:{}", upload_id), data.to_string()) {
+    match conn.set::<String, String, ()>(format!("upload:{}", redis_upload_id), data.to_string()) {
         Ok(_) => {}
         Err(e) => {
             return Ok(HttpResponse::InternalServerError()
@@ -884,7 +938,7 @@ pub async fn start_chunked_upload(
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "status": "success",
         "message": "Successfully started multipart upload",
-        "upload_id": upload_id,
+        "upload_id": redis_upload_id,
     })))
 }
 
@@ -892,9 +946,7 @@ pub async fn start_chunked_upload(
 pub async fn upload_chunk(
     path_info: web::Path<ChunkedWorldVersionPath>,
     query: web::Query<ChunkedUploadQuery>,
-    // payload: MultipartForm<ChunkedUploadForm>,
     mut payload: Multipart,
-    // pool: web::Data<PgPool>,
     redis_pool: web::Data<RedisPool>,
     object_store: web::Data<Arc<Bucket>>,
     auth_guard: AuthMiddleware,
@@ -910,37 +962,40 @@ pub async fn upload_chunk(
 
     let object_store = object_store.into_inner();
 
-    // const BUFFER_SIZE: usize = 10 * 1024 * 1024;
+    let redis_upload_id = path_info.upload_id.to_string();
 
-    // let world_id = path_info.world_id.to_string();
-    // let version_id = path_info.version_id.to_string();
-    let upload_id = path_info.upload_id.to_string();
-
-    let upload_data = match conn.get::<String, String>(format!("upload:{}", upload_id)) {
+    let upload_data = match conn.get::<String, String>(format!("upload:{}", redis_upload_id)) {
         Ok(data) => {
             let data: serde_json::Value = serde_json::from_str(&data).unwrap();
             data
         }
         Err(e) => {
+            error!("Error getting upload data from redis: {:?}", e);
+
             return Ok(HttpResponse::InternalServerError()
-                .json(serde_json::json!({"status": "error", "message": format_args!("{:?}", e)})));
+                .json(serde_json::json!({"status": "error", "message": "Invalid upload id."})));
         }
     };
 
-    let parts_deserialized: Vec<PartDeserialize> =
-        serde_json::from_value(upload_data["parts"].to_owned())?;
+    let mut parts: Vec<Part> = match upload_data["parts"].as_array() {
+        Some(parts) => {
+            let parts_deserialized: Vec<PartDeserialize> = parts
+                .into_iter()
+                .map(|part| serde_json::from_value(part.to_owned()).unwrap())
+                .collect();
 
-    let mut parts: Vec<Part> = parts_deserialized
-        .into_iter()
-        .map(|part| Part {
-            part_number: part.part_number,
-            etag: part.etag,
-        })
-        .collect();
+            parts_deserialized
+                .into_iter()
+                .map(|part| Part {
+                    part_number: part.part_number,
+                    etag: part.etag,
+                })
+                .collect()
+        }
+        None => Vec::new(),
+    };
 
-    // let raw_part = payload.part.0.clone().unwrap_or("1".to_string());
-    // let part = raw_part.parse::<u32>().unwrap();
-    let part = query.part.unwrap_or(1) as u32;
+    let part_number = query.part.unwrap_or(1) as u32;
 
     let file_name = upload_data.get("name").unwrap().as_str().unwrap();
 
@@ -949,56 +1004,63 @@ pub async fn upload_chunk(
             .json(serde_json::json!({"status": "error", "message": "File name does not match."})));
     }
 
-    let file_path = format!(
-        "{}/{}/{}-{}.zip",
-        upload_data.get("user_id").unwrap(),
-        upload_data.get("world_id").unwrap(),
-        upload_data.get("version_id").unwrap(),
-        upload_data.get("created_at").unwrap()
-    );
+    let upload_id = upload_data.get("upload_id").unwrap().to_string();
+    let file_path = upload_data.get("file_path").unwrap().to_string();
+    let content_type = upload_data.get("content_type").unwrap().to_string();
 
-    // let file_bytes = payload.file.data.to_vec();
-
-    let file_bytes = match payload.next().await {
+    match payload.next().await {
         Some(item) => {
-            let mut field = item.unwrap();
-            let mut bytes = Vec::new();
-            while let Some(chunk) = field.next().await {
-                let chunk = chunk.unwrap();
-                let cap = 500 * 1024 * 1024;
+            let mut field = match item {
+                Ok(field) => field,
+                Err(e) => {
+                    error!("Multipart field error: {:?}", e);
 
-                if bytes.len() >= cap {
-                    return Ok(HttpResponse::BadRequest()
-                        .json(serde_json::json!({"status": "error", "message": "File to large for default upload limit."})));
-                } else {
-                    bytes.extend_from_slice(&chunk);
+                    return Ok(HttpResponse::InternalServerError()
+                        .json(serde_json::json!({"status": "error", "message": "Error reading file bytes."})));
                 }
+            };
+
+            while let Some(chunk) = field.next().await {
+                match chunk {
+                    Ok(chunk) => {
+                        if chunk.len() >= 5 * 1024 * 1024 {
+                            match object_store
+                                .put_multipart_chunk(
+                                    chunk.to_vec(),
+                                    &file_path,
+                                    part_number,
+                                    &upload_id,
+                                    &content_type,
+                                )
+                                .await
+                            {
+                                Ok(returned_part) => {
+                                    parts.push(returned_part);
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "Error uploading part: {:?}, Part Number: {}",
+                                        e, part_number
+                                    );
+
+                                    return Ok(HttpResponse::BadRequest()
+                                        .json(serde_json::json!({"status": "error", "message": "Error uploading part."})));
+                                }
+                            };
+                        }
+                    }
+                    Err(e) => {
+                        error!("Multipart error getting bytes: {:?}", e);
+
+                        return Ok(HttpResponse::InternalServerError()
+                            .json(serde_json::json!({"status": "error", "message": "Error reading file bytes."})));
+                    }
+                };
             }
-            bytes
         }
         None => {
             return Ok(HttpResponse::BadRequest()
                 .json(serde_json::json!({"status": "error", "message": "No file was provided"})));
-        }
-    };
-
-    match object_store
-        .put_multipart_chunk(
-            file_bytes,
-            &file_path,
-            part,
-            &upload_id,
-            // payload.content_type.as_str(),
-            query.content_type.as_str(),
-        )
-        .await
-    {
-        Ok(returned_part) => {
-            parts.push(returned_part);
-        }
-        Err(e) => {
-            return Ok(HttpResponse::BadRequest()
-                .json(serde_json::json!({"status": "error", "message": format_args!("{:?}", e)})));
         }
     };
 
@@ -1007,12 +1069,15 @@ pub async fn upload_chunk(
         "version_id": upload_data["version_id"],
         "user_id": upload_data["user_id"],
         "upload_id": upload_id,
+        "file_path": file_path,
+        "content_type": content_type,
+        "num_parts": upload_data["num_parts"],
         "parts": parts,
         "name": upload_data["name"],
         "created_at": upload_data["created_at"],
     });
 
-    match conn.set::<String, String, ()>(format!("upload:{}", upload_id), data.to_string()) {
+    match conn.set::<String, String, ()>(format!("upload:{}", redis_upload_id), data.to_string()) {
         Ok(_) => {}
         Err(e) => {
             return Ok(HttpResponse::InternalServerError()
@@ -1021,7 +1086,7 @@ pub async fn upload_chunk(
     };
 
     Ok(HttpResponse::Accepted()
-        .json(serde_json::json!({"status": "success", "message": format!("Version part: {} successfully uploaded.", part)})))
+        .json(serde_json::json!({"status": "success", "message": format!("Version part: {} successfully uploaded.", part_number)})))
 }
 
 #[patch("/{world_id}/versions/{version_id}/upload/{upload_id}")]
@@ -1042,9 +1107,9 @@ pub async fn end_chunked_upload(
 
     let mut conn = redis_pool.get().unwrap();
 
-    let upload_id = path_info.upload_id.to_string();
+    let redis_upload_id = path_info.upload_id.to_string();
 
-    let upload_data = match conn.get::<String, String>(format!("upload:{}", upload_id)) {
+    let upload_data = match conn.get::<String, String>(format!("upload:{}", redis_upload_id)) {
         Ok(data) => {
             let data: serde_json::Value = serde_json::from_str(&data).unwrap();
             data
@@ -1075,6 +1140,7 @@ pub async fn end_chunked_upload(
 
     let world_id = upload_data.get("world_id").unwrap().to_string();
     let version_id = upload_data.get("version_id").unwrap().to_string();
+    let upload_id = upload_data.get("upload_id").unwrap().to_string();
 
     let world_uuid = match Uuid::parse_str(&world_id) {
         Ok(uuid) => uuid,
@@ -1129,13 +1195,7 @@ pub async fn end_chunked_upload(
         }
     }
 
-    let backup_path = format!(
-        "{}/{}/{}-{}.zip",
-        upload_data.get("user_id").unwrap(),
-        world_id.clone(),
-        version_id.clone(),
-        upload_data.get("created_at").unwrap(),
-    );
+    let backup_path = upload_data.get("file_path").unwrap().to_string();
 
     match object_store
         .complete_multipart_upload(&backup_path, &upload_id, parts)
@@ -1143,8 +1203,10 @@ pub async fn end_chunked_upload(
     {
         Ok(_) => {}
         Err(e) => {
+            error!("Error completing multipart upload: {:?}", e);
+
             return Ok(HttpResponse::InternalServerError()
-                .json(serde_json::json!({"status": "error", "message": format_args!("{:?}", e)})));
+                .json(serde_json::json!({"status": "error", "message": "Error completing multipart upload."})));
         }
     }
 
@@ -1196,7 +1258,7 @@ pub async fn end_chunked_upload(
         }
     }
 
-    match conn.del::<String, ()>(format!("upload:{}", upload_id)) {
+    match conn.del::<String, ()>(format!("upload:{}", redis_upload_id)) {
         Ok(_) => {}
         Err(_) => {}
     }
@@ -1226,7 +1288,7 @@ pub async fn abort_chunked_upload(
 
     let world_id = path_info.world_id.to_string();
     let version_id = path_info.version_id.to_string();
-    let upload_id = path_info.upload_id.to_string();
+    let redis_upload_id = path_info.upload_id.to_string();
 
     let world_uuid = match Uuid::parse_str(&world_id) {
         Ok(uuid) => uuid,
@@ -1283,7 +1345,7 @@ pub async fn abort_chunked_upload(
         }
     };
 
-    let upload_data = match conn.get::<String, String>(format!("upload:{}", upload_id)) {
+    let upload_data = match conn.get::<String, String>(format!("upload:{}", redis_upload_id)) {
         Ok(data) => {
             let data: serde_json::Value = serde_json::from_str(&data).unwrap();
             data
@@ -1294,13 +1356,9 @@ pub async fn abort_chunked_upload(
         }
     };
 
-    let file_path = format!(
-        "{}/{}/{}-{}.zip",
-        upload_data.get("user_id").unwrap(),
-        world_id.clone(),
-        version_id.clone(),
-        upload_data.get("created_at").unwrap()
-    );
+    let upload_id = upload_data.get("upload_id").unwrap().to_string();
+
+    let file_path = upload_data.get("file_path").unwrap().to_string();
 
     match object_store.abort_upload(&file_path, &upload_id).await {
         Ok(_) => {}
@@ -1318,7 +1376,7 @@ pub async fn abort_chunked_upload(
         }
     }
 
-    match conn.del::<String, ()>(format!("upload:{}", upload_id)) {
+    match conn.del::<String, ()>(format!("upload:{}", redis_upload_id)) {
         Ok(_) => {}
         Err(_) => {}
     }

@@ -31,5 +31,5 @@ pub fn create_object_store(settings: StorageSettings) -> Result<Bucket, String> 
     )
     .expect("Unable to create object store.");
 
-    Ok(bucket)
+    Ok(bucket.with_path_style())
 }

@@ -1,4 +1,3 @@
-use actix_multipart::form::{MultipartForm, tempfile::TempFile, text::Text, bytes::Bytes};
 use r2d2::Pool;
 use r2d2_redis::RedisConnectionManager;
 use serde::Deserialize;
@@ -32,16 +31,7 @@ pub struct ChunkedWorldVersionPath {
 pub struct ChunkedUploadQuery {
     pub part: Option<i64>,
     pub name: String,
-    pub content_type: String,
-}
-
-#[derive(MultipartForm)]
-pub struct ChunkedUploadForm {
-    pub part: Text<Option<String>>,
-    pub name: Text<String>,
-    pub content_type: Text<String>,
-    #[multipart(limit = "500 MB")]
-    pub file: Bytes,
+    pub content_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
