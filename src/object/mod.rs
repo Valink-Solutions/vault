@@ -1,3 +1,3 @@
-pub mod file_handler;
+pub mod handler;
 
-pub use file_handler::create_object_store;
+pub use handler::create_object_store;

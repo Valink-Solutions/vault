@@ -26,7 +26,6 @@ serde_json = "1.0.96"
 futures = "0.3.28"
 argon2 = "0.5.0"
 rand_core = { version = "0.6.4", features = ["std"] }
-object_store = { version = "0.6.0", features = ["aws"] }
 actix-multipart = "0.6.0"
 futures-util = "0.3.28"
 tokio-stream = "0.1.13"
@@ -44,6 +43,13 @@ url = "2.3.1"
 redis = { version = "0.23.0", features = ["r2d2", "serde", "serde_json", "json", "tokio-comp"] }
 r2d2 = "0.8.10"
 r2d2_redis = "0.14.0"
+rust-s3 = "0.34.0-beta3"
+aws-creds = "0.35.0"
+aws-region = "0.25.3"
+async-trait = "0.1.68"
+thiserror = "1.0.40"
+reqwest = "0.11.18"
+tracing = "0.1.37"
 
 [dependencies.sqlx]
 version = "0.6.3"

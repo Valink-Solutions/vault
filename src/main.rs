@@ -91,8 +91,10 @@ async fn main() -> std::io::Result<()> {
             .wrap(
                 Cors::default()
                     .allow_any_origin()
-                    .supports_credentials()
-                    .max_age(3600),
+                    .allow_any_header()
+                    .allow_any_method()
+                    .max_age(3600)
+                    .send_wildcard(),
             )
             .configure(vault::routes::auth_config)
             .configure(vault::routes::dashboard_config)
