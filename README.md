@@ -16,4 +16,4 @@ Contributions are welcome! Please read the [CONTRIBUTING.md](CONTRIBUTING.md) fi
 
 ## License
 
-This project is licensed under the [Business Source License](LICENSE).
+This project is licensed under the [GNU General Public License v3.0](LICENSE.txt).
